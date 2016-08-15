@@ -1142,7 +1142,7 @@ var WindowMaker = new function()
 
     var tabs = appendTabs(bar, WA.widgetID, ['Main', 'View', 'Shading',
         'Skeleton filters', 'View settings', 'Stacks', 'Shading parameters',
-        'Animation', 'Export']);
+        'Animation', 'History', 'Export']);
 
     var select_source = CATMAID.skeletonListSources.createSelect(WA);
 
@@ -1459,7 +1459,9 @@ var WindowMaker = new function()
         [
           ['Play', function() {
             try {
-              WA.startAnimation(WA.createAnimation());
+              WA.createAnimation()
+                .then(WA.startAnimation.bind(WA))
+                .catch(CATMAID.handleError);
             } catch(e) {
               if (e instanceof CATMAID.ValueError) {
                 CATMAID.msg("Error", e.message);
@@ -1538,6 +1540,24 @@ var WindowMaker = new function()
           ['Back and forth', o.animation_back_forth, function() {
             WA.options.animation_back_forth = this.checked;
           }, false]
+        ]);
+
+    appendToTab(tabs['History'],
+        [
+          ['Play', function() {
+            try {
+              WA.createAnimation('history')
+                .then(WA.startAnimation.bind(WA))
+                .catch(CATMAID.handleError);
+            } catch(e) {
+              if (e instanceof CATMAID.ValueError) {
+                CATMAID.msg("Error", e.message);
+              } else {
+                throw e;
+              }
+            }
+          }],
+          ['Stop', WA.stopAnimation.bind(WA)]
         ]);
 
     appendToTab(tabs['Export'],

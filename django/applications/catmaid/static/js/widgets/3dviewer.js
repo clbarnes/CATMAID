@@ -32,6 +32,10 @@
     this.animationRequestId = undefined;
     // The current animation, if any
     this.animation = undefined;
+    // Indicates if there is a history animation running
+    this.historyRequestId = undefined;
+    // The current history animation, if any
+    this.history = undefined;
     // Map loaed volume IDs to an array of Three.js meshes
     this.loadedVolumes = {};
     // Current set of filtered connectors (if any)
@@ -3567,6 +3571,8 @@
     this.reviews = null;
     // The arbor of the axon, as computed by splitByFlowCentrality. Loaded dynamically, and erased when refreshing like this.reviews.
     this.axon = null;
+    // Optional history information
+    this.history = null;
   };
 
   WebGLApplication.prototype.Space.prototype.Skeleton.prototype = {};
@@ -4756,7 +4762,8 @@
   };
 
 
-  WebGLApplication.prototype.Space.prototype.Skeleton.prototype.reinit_actor = function(skeletonmodel, json, options) {
+  WebGLApplication.prototype.Space.prototype.Skeleton.prototype.reinit_actor =
+      function(skeletonmodel, json, options, with_history) {
     if (this.actor) {
       this.destroy();
     }
@@ -4817,7 +4824,8 @@
         }
         var nodeID = node[0];
         if (node[6] > 0 && p[6] > 0) {
-          // Create cylinder using the node's radius only (not the parent) so that the geometry can be reused
+          // Create cylinder using the node's radius only (not the parent) so
+          // that the geometry can be reused
           this.createCylinder(v1, v2, node[6], material);
           // Create skeleton line as well
           this.createEdge(v1, v2, 'neurite');
@@ -4916,6 +4924,16 @@
       }
     }
 
+    if (with_history) {
+      this.history = {
+        nodes: vs
+      };
+
+      // Add history information to all current nodes and add historic nodes
+    } else {
+      this.histoty = null;
+    }
+
     if (options.resample_skeletons) {
       if (options.smooth_skeletons) {
         // Can't both smooth and resample
@@ -4949,11 +4967,17 @@
     }
   };
 
-  WebGLApplication.prototype.Space.prototype.Skeleton.prototype.show = function(options) {
+  /**
+   * Make a skeleton or parts of it visible. If the optional timestamp parameter
+   * is passed in, only nodes/edges/connectors will be displayed that are
+   * visible at this point in time.
+   */
+  WebGLApplication.prototype.Space.prototype.Skeleton.prototype.show = function(
+      options, timetamp) {
 
     this.addCompositeActorToScene();
 
-    this.setActorVisibility( this.skeletonmodel.selected ); // the skeleton, radius spheres and label spheres
+    this.setActorVisibility( this.skeletonmodel.selected, timestamp ); // the skeleton, radius spheres and label spheres
 
     if (options.connector_filter) {
       this.setPreVisibility( false ); // the presynaptic edges and spheres
@@ -4970,6 +4994,20 @@
 
     // Will query the server
     if ('cyan-red' !== options.connector_color) this.space.updateConnectorColors(options, [this]);
+  };
+
+  /**
+   * Only show nodes of this skeleton if they are visible at the passed in point
+   * in time. Expectes history information to be available.
+   */
+  WebGLApplication.prototype.Space.prototype.Skeleton.prototype.setVisibileByTime =
+      function(timestamp) {
+    // Make sure there is history data available.
+    if (!this.history) {
+      throw new CATMAID.ValueError("Skeleton " + this.id +
+          " doesn't have history data attached");
+    }
+
   };
 
   /**
@@ -5285,33 +5323,121 @@
   /**
    * Create a new animation, based on the 3D viewers current state.
    */
-  WebGLApplication.prototype.createAnimation = function()
+  WebGLApplication.prototype.createAnimation = function(type)
   {
-    // For now it is always the Y axis rotation
-    var options = {
-      type: 'rotation',
-      axis: this.options.animation_axis,
-      camera: this.space.view.camera,
-      target: this.space.view.controls.target,
-      speed: this.options.animation_rotation_speed,
-      backandforth: this.options.animation_back_forth,
-    };
+    // Default to rotation type
+    type = type || 'rotation';
 
-    // Add a notification handler for stepwise visibility, if enabled and at least
-    // one skeleton is loaded.
-    var visType = this.options.animation_stepwise_visibility_type;
-    if (visType !== 'all') {
-      // Get current visibility map and create notify handler
-      var visMap = this.space.getVisibilityMap();
-      var visOpts = this.options.animation_stepwise_visibility_options;
-      options['notify'] = this.createStepwiseVisibilityHandler(visMap,
-          visType, visOpts);
-      // Create a stop handler that resets visibility to the state we found before
-      // the animation.
-      options['stop'] = this.createVisibibilityResetHandler(visMap);
+    if ('rotation' === type) {
+      // For now it is always the Y axis rotation
+      var options = {
+        type: 'rotation',
+        axis: this.options.animation_axis,
+        camera: this.space.view.camera,
+        target: this.space.view.controls.target,
+        speed: this.options.animation_rotation_speed,
+        backandforth: this.options.animation_back_forth,
+      };
+
+      // Add a notification handler for stepwise visibility, if enabled and at least
+      // one skeleton is loaded.
+      var visType = this.options.animation_stepwise_visibility_type;
+      if (visType !== 'all') {
+        // Get current visibility map and create notify handler
+        var visMap = this.space.getVisibilityMap();
+        var visOpts = this.options.animation_stepwise_visibility_options;
+        options['notify'] = this.createStepwiseVisibilityHandler(visMap,
+            visType, visOpts);
+        // Create a stop handler that resets visibility to the state we found before
+        // the animation.
+        options['stop'] = this.createVisibibilityResetHandler(visMap);
+      }
+
+      var animation = CATMAID.AnimationFactory.createAnimation(options);
+      return Promise.resolve(animation);
+    } else if ('history' === type) {
+      // This animation type will make all existing skeletons invisible and add
+      // history versions of the same skeletons to the scene. These will store
+      // different versions of the skeletons and can switch on and off
+      // individual edges based on a time.
+      return new Promise((function(resolve, reject) {
+        var options = {
+          type: 'history'
+        };
+        // Get current visibility information and set per-skeleton visibility
+        // mode to 'history'. This makes skeletons appear with the creation time
+        // of their oldest node. Individual nodes and edges of the
+        // representation may also be hidden by a location on a time line.
+        var visType = 'history';
+        // Create notify handler
+        var visMap = this.getVisibilityMap();
+        var visOpts = this.options.animation_stepwise_visibility_options;
+        options['notify'] = this.createStepwiseVisibilityHandler(visMap,
+            visType, visOpts);
+        // Create a stop handler that resets visibility to the state we found before
+        // the animation.
+        options['stop'] = this.createVisibibilityResetHandler(visMap);
+
+        var skeletonIds = this.getSelectedSkeletons();
+        var url1 = django_url + project.id + '/',
+            lean = this.options.lean_mode ? 0 : 1,
+            url2 = '/' + lean  + '/' + lean + '/compact-skeleton';
+        // Get historic data of current skeletons. Create a map of events, Which
+        // are consumed if their time is ready.
+        var history = {};
+        var now = new Date();
+        fetchSkeletons.call(this,
+            skeletonIds,
+            function(skeletonId) {
+              return url1 + skeletonId + url2;
+            },
+            function(skeleton_id) {
+              return {
+                with_history: true
+              };
+            },
+            (function(skeleton_id, json) {
+              console.log(skeleton_id, json);
+              // Get historic data and construct one skeleton per time sample
+              var currentNodes = json[0];
+              for (var i=0; i<currentNodes.length; ++i) {
+                var editionTime = new Date(currentNodes[i][8]);
+              }
+
+              // Update existing skeletons with history information, this also
+              // acts like a cache when re-starting history animation.
+              var sk = this.space.updateSkeleton(models[skeleton_id], json, options, true);
+              if (sk) sk.show(this.options, now);
+            }).bind(this),
+            function(skeleton_id) {
+              // Failed loading: will be handled elsewhere via fnMissing in
+              // fetchCompactSkeletons
+            },
+            (function() {
+
+              // TODO: Coloring
+              /*
+              this.updateSkeletonColors(
+                (function() {
+                    if (this.options.connector_filter) this.refreshRestrictedConnectors();
+                    if (typeof callback === "function") {
+                      try { callback(); } catch (e) { alert(e); }
+                    }
+                }).bind(this));
+                */
+
+              // Create animation
+              //options["skeletons"] = {};
+              //options["history"] = {};
+
+              var animation = CATMAID.AnimationFactory.createAnimation(options);
+              resolve(animation);
+            }).bind(this),
+            'GET');
+      }).bind(this));
+    } else {
+      throw new CATMAID.ValueError("Unknown animation type: " + type);
     }
-
-    return CATMAID.AnimationFactory.createAnimation(options);
   };
 
   /**
@@ -5848,6 +5974,15 @@
 
           animation.update = CATMAID.AnimationFactory.AxisRotation(camera,
               target, axis, speed, backAndForth, notify);
+        } else if (options.type === "history") {
+          if (!options.skeletons) {
+            throw new CATMAID.ValueError("Need skeleton information for history animation");
+          }
+          if (!options.history) {
+            throw new CATMAID.ValueError("Need historic skeleton information for " +
+                "history animation");
+          }
+          animation.update = CATMAID.AnimationFactory.History(skeletons, history);
         } else {
           throw Error("Could not create animation, don't know type: " +
               options.type);
@@ -5917,6 +6052,17 @@
       // (relative to target), rotating it and make it a world position by adding
       // it to the target.
       camera.position.copy(startPosition).applyMatrix4(m).add(targetPosition);
+    };
+  };
+
+  /**
+   * Crate a history animation update function. It will make pars of the
+   * available skeletons visible based on the tick count. It expects a history
+   * of all visible skeletons as argument.
+   */
+  CATMAID.AnimationFactory.History = function(skeletons, history) {
+    return function(t) {
+      console.log("History update");
     };
   };
 
