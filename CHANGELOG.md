@@ -8,9 +8,13 @@ Miscellaneous:
 
 - Bookmarks are now persistent for each project.
 
+- From the Graph Widget exported SVG files preserve now the view of the widget
+  (zoom and pan).
 
 ### Bug fixes
 
+- 3D Viewer: custom tag highlighting now also works for tags with upper case
+  letters.
 
 
 ## 2017.01.19

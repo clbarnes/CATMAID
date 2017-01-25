@@ -5753,7 +5753,7 @@
     }, this);
 
     // Place spheres on nodes with special labels, if they don't have a sphere there already
-    var customTagRe = new RegExp(options.custom_tag_spheres_regex || 'a^');
+    var customTagRe = new RegExp(options.custom_tag_spheres_regex || 'a^', 'i');
     for (var tag in this.tags) {
       if (this.tags.hasOwnProperty(tag)) {
         var tagLC = tag.toLowerCase();

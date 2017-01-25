@@ -2367,17 +2367,25 @@
       return;
     }
 
+    var cy = this.cy;
+
     // Manually create SVG for graph, which is easier than making Cytoscapt.js
     var div= $('#graph_widget' + this.widgetID),
         width = div.width(),
-        height = div.height();
-    var svg = new CATMAID.SVGFactory(width, height);
+        height = div.height(),
+        extent = cy.extent(),
+        viewX = extent.x1,
+        viewY = extent.y1,
+        viewWidth = extent.x2 - extent.x1,
+        viewHeight = extent.y2 - extent.y1;
+
+    var svg = new CATMAID.SVGFactory(width, height, viewX, viewY, viewWidth, viewHeight);
 
     var templateTextStyle = {
       'fill': null,
       'stroke-width': '0px',
       'font-family': 'Helvetica, sans-serif',
-      'fonr-size': '10'
+      'font-size': '10'
     };
 
     var templateLineStyle = {
@@ -2396,11 +2404,13 @@
       'edgeType': 'haystack'
     };
 
-    var cy = this.cy;
     var renderer = cy.renderer();
 
     // Add all edges, for now, draw from node centers
     this.cy.edges().each(function(i, edge) {
+      if (edge.hidden()) {
+        return;
+      }
       var data = edge.data();
       var startId = data.start;
       var style = edge.style();
@@ -2462,6 +2472,9 @@
 
     // Add all nodes to SVG
     this.cy.nodes().each(function(i, node) {
+      if (node.hidden()) {
+        return;
+      }
       var data = node.data();
       var pos = node.position();
       var style = node.style();
