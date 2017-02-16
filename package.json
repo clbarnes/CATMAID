@@ -1,0 +1,13 @@
+{
+  "name": "CATMAID",
+  "scripts": {
+    "build": "babel ./django/static/js/catmaid.js -d ./django/static/js/catmaid-transpiled.js; babel ./django/static/js/lib -d ./django/static/js/lib-transpiled;"
+  },
+  "babel": {
+
+  },
+  "devDependencies": {
+    "babel-cli": "^6.0.0",
+    "babel-preset-latest": "^6.22.0"
+  }
+}
