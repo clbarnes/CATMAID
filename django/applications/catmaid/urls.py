@@ -285,6 +285,7 @@ urlpatterns += [
     url(r'^(?P<project_id>\d+)/skeletongroup/adjacency_matrix$', skeleton.adjacency_matrix),
     url(r'^(?P<project_id>\d+)/skeletongroup/skeletonlist_subgraph', skeleton.skeletonlist_subgraph),
     url(r'^(?P<project_id>\d+)/skeletongroup/all_shared_connectors', skeleton.all_shared_connectors),
+    url(r'^(?P<project_id>\d+)/skeleton/auto-synapses', tile.get_skeleton_synapses),
 ]
 
 # Skeleton export
