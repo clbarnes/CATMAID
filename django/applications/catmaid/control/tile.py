@@ -7,7 +7,8 @@ import logging
 import numpy as np
 import base64
 from django.conf import settings
-from django.http import HttpResponse
+from django.http import HttpResponse, JsonResponse
+import pandas as pd
 
 from catmaid.models import UserRole, TILE_SOURCE_TYPES
 from catmaid.control.common import ConfigurationError
@@ -84,7 +85,28 @@ def get_tile(request, project_id=None, stack_id=None):
         pil_image.save(response, "PNG")
         return response
 
-    return response
+
+@requires_user_role([UserRole.Browse])
+def get_skeleton_synapses(request, project_id=None):
+    # todo: replace this with a database table
+    basename = request.GET.get('basename', 'raw')
+    skeleton_id = request.GET.get('skid')
+
+    fpath = os.path.join( settings.HDF5_STORAGE_PATH, '{}_{}'.format( project_id, basename ) )
+    if not os.path.exists(fpath):
+        return JsonResponse([])
+
+    with h5py.File(fpath, 'r') as f:
+        hdfpath = 'synapse_info'
+        data = f[hdfpath]
+        headers = data.attrs['headers']
+        df = pd.DataFrame(np.array(data), columns=headers)
+
+    relevant_rows = df[df['skeleton_id'] * df['overlaps_node_segment'] == int(skeleton_id)]
+    relevant_rows.to_dict('records')
+
+    return JsonResponse(relevant_rows)
+
 
 @requires_user_role([UserRole.Annotate])
 def put_tile(request, project_id=None, stack_id=None):
