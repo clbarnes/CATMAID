@@ -29,3 +29,4 @@ requests==2.18.4
 scipy==0.18.1; platform_python_implementation != 'PyPy'
 sqlparse==0.1.19
 ujson==1.35
+pandas
