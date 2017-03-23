@@ -103,9 +103,8 @@ def get_skeleton_synapses(request, project_id=None):
         df = pd.DataFrame(np.array(data), columns=headers)
 
     relevant_rows = df[df['skeleton_id'] * df['overlaps_node_segment'] == int(skeleton_id)]
-    relevant_rows.to_dict('records')
 
-    return JsonResponse(relevant_rows)
+    return JsonResponse(relevant_rows.to_dict('records'), safe=False)
 
 
 @requires_user_role([UserRole.Annotate])
