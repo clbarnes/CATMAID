@@ -12,6 +12,7 @@ from django.db import connection
 from django.db.models import Count
 from django.shortcuts import get_object_or_404
 from django.http import HttpResponse, JsonResponse, Http404
+import itertools
 
 from rest_framework.decorators import api_view
 
@@ -23,6 +24,8 @@ from catmaid.control.authentication import requires_user_role, can_edit_or_fail
 from catmaid.control.link import create_treenode_links
 from catmaid.control.common import cursor_fetch_dictionary, \
         get_relation_to_id_map, get_request_list
+
+from catmaid.control.node import Postgis3dNodeProvider
 
 # Python 2 and 3 compatible map iterator
 from six.moves import map
@@ -786,3 +789,37 @@ def connector_detail(request, project_id, connector_id):
         'confidence': detail[4],
         'partners': [p for p in detail[5]]
     })
+
+
+@api_view(['GET'])
+@requires_user_role([UserRole.Browse])
+def connectors_intersecting(request, project_id=None):
+    """
+    Get up to 50 connectors which are either in or have edges which intersect with the given bounding box.
+
+    Args:
+        request: Parameters should include bounding box of the form {xmin: number, xmax: number, ymin: ...}
+            Coordinates should be in project coordinates (i.e. taking into account resolution and offset)
+        project_id:
+
+    Returns:
+        Array of connector information arrays containing
+        [id, x, y, z, connector_confidence, edit_time, user_id, treenode_id, relation_id ...]
+    """
+    node_provider = Postgis3dNodeProvider()
+
+    params = {
+        'project_id': project_id,
+        'left': float(request.GET.get('xmin', 0)),
+        'top': float(request.GET.get('ymin', 0)),
+        'z1': float(request.GET.get('zmin', 0)),
+        'right': float(request.GET.get('xmax', 0)),
+        'bottom': float(request.GET.get('ymax', 0)),
+        'z2': float(request.GET.get('zmax', 0)),
+        'limit': 50
+    }
+
+    cursor = connection.cursor()
+    connectors = node_provider.get_connector_data(cursor, params, [])
+
+    return JsonResponse(connectors, safe=False)
