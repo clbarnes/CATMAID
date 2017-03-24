@@ -29,6 +29,7 @@ from catmaid.control.node import Postgis3dNodeProvider
 
 # Python 2 and 3 compatible map iterator
 from six.moves import map
+from six import iteritems
 
 
 
@@ -791,6 +792,19 @@ def connector_detail(request, project_id, connector_id):
     })
 
 
+def bbox_to_node_provider_params(bbox_dict, project_id, limit=50):
+    return {
+        'project_id': project_id,
+        'limit': limit,
+        'left': float(bbox_dict.get('xmin', 0)),
+        'top': float(bbox_dict.get('ymin', 0)),
+        'z1': float(bbox_dict.get('zmin', 0)),
+        'right': float(bbox_dict.get('xmax', 0)),
+        'bottom': float(bbox_dict.get('ymax', 0)),
+        'z2': float(bbox_dict.get('zmax', 0)),
+    }
+
+
 @api_view(['GET'])
 @requires_user_role([UserRole.Browse])
 def connectors_intersecting(request, project_id=None):
@@ -807,19 +821,23 @@ def connectors_intersecting(request, project_id=None):
         [id, x, y, z, connector_confidence, edit_time, user_id, treenode_id, relation_id ...]
     """
     node_provider = Postgis3dNodeProvider()
-
-    params = {
-        'project_id': project_id,
-        'left': float(request.GET.get('xmin', 0)),
-        'top': float(request.GET.get('ymin', 0)),
-        'z1': float(request.GET.get('zmin', 0)),
-        'right': float(request.GET.get('xmax', 0)),
-        'bottom': float(request.GET.get('ymax', 0)),
-        'z2': float(request.GET.get('zmax', 0)),
-        'limit': 50
-    }
-
     cursor = connection.cursor()
+
+    params = bbox_to_node_provider_params(request.GET, project_id)
     connectors = node_provider.get_connector_data(cursor, params, [])
 
     return JsonResponse(connectors, safe=False)
+
+
+@api_view(['POST'])
+@requires_user_role([UserRole.Browse])
+def connectors_intersecting_many(request, project_id=None):
+    node_provider = Postgis3dNodeProvider()
+    cursor = connection.cursor()
+
+    output = dict()
+    for syn_id, bbox_str in iteritems(request.POST):
+        params = bbox_to_node_provider_params(json.loads(bbox_str), project_id)
+        output[syn_id] = node_provider.get_connector_data(cursor, params, [])
+
+    return JsonResponse(output)
