@@ -25,7 +25,38 @@
 
     CATMAID.skeletonListSources.updateGUI();
 
-    this.oTable = null;  // Initialise DataTables API instance
+    /**
+     *  {
+     *    skeletonID1: {
+     *      'timestamp': timestamp,
+     *     'rows': [
+     *       {
+     *           'detectedSynapseID': synID,
+     *           'coords': {  // todo: stack or project coordinates?
+     *             'x': x,
+     *             'y': y,
+     *             'z': z,
+     *           },
+     *           'sizePx': sum of all pixel counts,
+     *           'slices': 1,
+     *           'uncertainty': mean uncertainty across all slices, // todo: should be weighted by size
+     *           'nodeID': first node encountered,  // todo: be smarter about picking a node
+     *           'skelID': skeletonID
+     *         },
+     *         {... and so on}
+     *       ]
+     *    },
+     *    skeletonID2: {
+     *      'timestamp': timestamp,
+     *     'rows': [rows]
+     *    },
+     *  }
+     *
+     * @type {{}}
+     */
+    this.cache = {};
+
+    this.oTable = null;
   };
 
   $.extend(SynapseDetectionTable.prototype, new InstanceRegistry());
@@ -33,37 +64,6 @@
   SynapseDetectionTable.prototype.getName = function() {
     return 'Synapse Detection Table ' + this.widgetID;
   };
-
-  /**
-   *  {
-   *    skeletonID1: {
-   *      'timestamp': timestamp,
-    *     'rows': [
-    *       {
-              'detectedSynapseID': synID,
-              'coords': {  // todo: stack or project coordinates?
-                'x': x,
-                'y': y,
-                'z': z,
-              },
-              'sizePx': sum of all pixel counts,
-              'slices': 1,
-              'uncertainty': mean uncertainty across all slices, // todo: should be weighted by size
-              'nodeID': first node encountered,  // todo: be smarter about picking a node
-              'skelID': skeletonID
-            },
-            {... and so on}
-          ]
-   *    },
-   *    skeletonID2: {
-   *      'timestamp': timestamp,
-    *     'rows': [rows]
-   *    },
-   *  }
-   *
-   * @type {{}}
-   */
-  var responseCache = {};
 
   SynapseDetectionTable.prototype.setSkelSourceText = function() {
     var count = this.skeletonSource.getNumberOfSkeletons();
@@ -75,9 +75,101 @@
     return (existingValue * existingCount + newValue) / (existingCount + 1);
   };
 
+  /**
+   * todo: replace this, please, god
+   * @param synapseInfo
+   */
+  var synapseInfoToBboxProject = function(synapseInfo) {
+    var xyRadius = Math.sqrt(synapseInfo.sizePx);
+    var zRadius = Math.ceil(synapseInfo.slices / 2);
+
+    var stack = project.getStackViewers()[0].primaryStack;
+    var bounds = stack.createStackToProjectBox(
+      {
+        min: {
+          x: synapseInfo.coords.x - xyRadius,
+          y: synapseInfo.coords.y - xyRadius,
+          z: synapseInfo.coords.z - zRadius
+        },
+        max: {
+          x: synapseInfo.coords.x + xyRadius,
+          y: synapseInfo.coords.y + xyRadius,
+          z: synapseInfo.coords.z + zRadius
+        }
+      }
+    );
+
+    return {
+      xmin: bounds.min.x,
+      ymin: bounds.min.y,
+      zmin: bounds.min.z,
+      xmax: bounds.max.x,
+      ymax: bounds.max.y,
+      zmax: bounds.max.z,
+    };
+  };
+
+  var connResponseToConnInfo = function(connResponse) {
+    return {
+      connID: connResponse[0],
+      coords: {
+        x: connResponse[1],
+        y: connResponse[2],
+        z: connResponse[3]
+      },
+      confidence: connResponse[4],
+      userID: connResponse[6],
+      treenodeID: connResponse[7]
+    };
+  };
+
+  var connsResponseToConnInfos = function(connsResponse) {
+    return connsResponse.map(connResponseToConnInfo);
+  };
+
+  /**
+   * Draw an approximate bounding box around the given detected synapse and see if it intersects with any
+   * manually traced connector.
+   *
+   * @param synapseInfo
+   * @return Array of Promises of connInfo objects
+   */
+  SynapseDetectionTable.prototype.getIntersectingConnectors = function(synapseInfo) {
+    var bbox = synapseInfoToBboxProject(synapseInfo);
+    return CATMAID.fetch(project.id + '/connectors/intersecting/', 'GET', bbox)
+      .then(connsResponseToConnInfos)
+      .then(function(connInfos) {
+        synapseInfo.intersectingConnectors = connInfos;
+        return synapseInfo;
+      });
+  };
+
+  /**
+   * getIntersectingConnectors for many synapses at a time
+   *
+   * @param synapseInfosObj : object mapping synapse ID to synapseInfo object
+   * @return Promise of object mapping synapse ID to array of connInfo objects
+   */
+  SynapseDetectionTable.prototype.getIntersectingConnectorsMany = function(synapseInfosObj) {
+    var data = Object.keys(synapseInfosObj).reduce(function(obj, synID) {
+      obj[synID] = JSON.stringify(synapseInfoToBboxProject(synapseInfosObj[synID]));
+      return obj;
+    }, {});
+
+    return CATMAID.fetch(project.id + '/connectors/intersecting/many/', 'POST', data)
+      .then(function(response) {
+        return Object.keys(response).reduce(function(obj, synID){
+          obj[synID] = connsResponseToConnInfos(response[synID]);
+          return obj;
+        }, {});
+      });
+  };
+
   SynapseDetectionTable.prototype.getSynapsesForSkel = function(skelID) {
-    if (responseCache[skelID] && Date.now() - responseCache[skelID] <= CACHE_TIMEOUT) {
-      return responseCache[skelID].rows;
+    var self = this;
+
+    if (this.cache[skelID] && Date.now() - this.cache[skelID] <= CACHE_TIMEOUT) {
+      return this.cache[skelID].rows;
     }
 
     return CATMAID.fetch(project.id + '/skeleton/auto-synapses/', 'GET', {skid: skelID, basename: BASENAME})
@@ -103,7 +195,8 @@
               slices: slices[synID].size,
               uncertainty: responseRow.detection_uncertainty,
               nodeID: responseRow.node_id,  // todo: be smarter about picking a node
-              skelID: responseRow.skeleton_id
+              skelID: responseRow.skeleton_id,
+              intersectingConnectors: null  // this is populated later
             };
           } else {
             rowsObj[synID].coords.x = addToMean(rowsObj[synID].coords.x, counts[synID], responseRow.x_px);
@@ -118,13 +211,22 @@
           }
         }
 
-        var rows = Object.keys(rowsObj).sort(function(a, b){return a - b;}).map(function(key){return rowsObj[key];});
+        return self.getIntersectingConnectorsMany(rowsObj)
+          .then(function(synInfosObj) {
+            var rowsWithIntersecting = Object.keys(synInfosObj)
+              .sort(function(a, b) {return a - b;})
+              .map(function(synID) {
+                rowsObj[synID].intersectingConnectors = synInfosObj[synID];
+                return rowsObj[synID];
+              });
 
-        responseCache[skelID] = {
-          timestamp: Date.now(),
-          rows: rows
-        };
-        return rows;
+            self.cache[skelID] = {
+              timestamp: Date.now(),
+              rows: rowsWithIntersecting
+            };
+
+            return rowsWithIntersecting;
+          });
       });
   };
 
@@ -156,7 +258,7 @@
         clear.setAttribute("type", "button");
         clear.setAttribute("value", "Clear");
         clear.onclick = function() {
-          Object.keys(responseCache).forEach(function(key){delete responseCache[key];});
+          Object.keys(self.cache).forEach(function(key){delete self.cache[key];});
           self.skeletonSource.clear();
         };
         sourceControls.appendChild(clear);
@@ -165,7 +267,7 @@
         refresh.setAttribute("type", "button");
         refresh.setAttribute("value", "Refresh");
         refresh.onclick = function() {
-          Object.keys(responseCache).forEach(function(key){delete responseCache[key];});
+          Object.keys(self.cache).forEach(function(key){delete self.cache[key];});
           self.update();
         };
         controls.appendChild(refresh);
@@ -187,6 +289,7 @@
                 <th>uncertainty</th> 
                 <th>size (px)</th> 
                 <th>slices</th> 
+                <th>intersecting connectors</th> 
               </tr> 
             </thead> 
             <tfoot> 
@@ -196,6 +299,7 @@
                 <th>uncertainty</th> 
                 <th>size (px)</th> 
                 <th>slices</th> 
+                <th>intersecting connectors</th> 
               </tr> 
             </tfoot> 
             <tbody> 
@@ -258,6 +362,14 @@
           orderable: true,
           className: "center"
         },
+        {
+          data: 'intersectingConnectors',
+          render: function(data, type, row, meta) {
+            return data.length;
+          },
+          orderable: true,
+          className: 'center'
+        }
       ]
     });
 
@@ -310,15 +422,20 @@
 
   SynapseDetectionTable.prototype.update = function() {
     var self = this;
+    var startTime = Date.now();
+    console.log('update started');
     this.oTable.clear();
-    Promise.all(
-      this.skeletonSource.getSelectedSkeletons()
-        .map(function(skelID){return self.getSynapsesForSkel(skelID);})
+    return Promise.all(
+      this.skeletonSource
+        .getSelectedSkeletons()
+        .map(self.getSynapsesForSkel.bind(self))
     ).then(function(rowsArr) {
       for (var rowObjs of rowsArr) {
         self.oTable.rows.add(rowObjs);
       }
       self.setSkelSourceText();
+      console.log(`update took ${(Date.now() - startTime)/1000}s`);
+      console.log('drawing');
       self.oTable.draw();
     });
   };
