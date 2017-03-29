@@ -833,6 +833,7 @@ def connectors_intersecting(request, project_id=None):
 @requires_user_role([UserRole.Browse])
 def connectors_intersecting_many(request, project_id=None):
     node_provider = Postgis3dNodeProvider()
+    node_provider.prepare_db_statements(connection)
     cursor = connection.cursor()
 
     output = dict()
