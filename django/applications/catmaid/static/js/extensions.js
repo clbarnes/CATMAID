@@ -10,6 +10,15 @@
  */
 
 /**
+ * Return an array containing the same elements as this set, sorted in the default order.
+ *
+ * @return {Array.<*>}
+ */
+Set.prototype.toJSON = function() {
+  return Array.from(this).sort();
+};
+
+/**
  * Return a new set of those items which exist in this set, but not in the given 'of'-able iterable.
  *
  * @param iterable
