@@ -124,9 +124,9 @@
         var jsonButton = document.createElement('button');
         jsonButton.innerText = 'Download cache dump';
         jsonButton.onclick = function() {
-          saveAs(new Blob([JSON.stringify(self.cache)], {type: 'text/json'}), 'syndetcache.json');
+          saveAs(new Blob([JSON.stringify(self.cache, null, 2)], {type: 'text/json'}), 'syndetcache.json');
         };
-        controls.appendChild(jsonButton)
+        controls.appendChild(jsonButton);
 
       },
       contentID: this.idPrefix + 'content',
@@ -213,6 +213,8 @@
             <tr><td>Detected associated with connectors</td><td id="${self.idPrefix}detected-and-traced">0</td></tr>
             <tr><td>Possible double-annotated</td><td id="${self.idPrefix}double-annotated">0</td></tr>
             <tr><td>Possible stitching error</td><td id="${self.idPrefix}stitch-error">0</td></tr>
+            <tr><td>Detection precision</td><td id="${self.idPrefix}detection-precision">0</td></tr>
+            <tr><td>Detection recall</td><td id="${self.idPrefix}detection-recall">0</td></tr>
           </table>
           
           <br>
@@ -363,6 +365,7 @@
 
     var $plots = $(`#${self.idPrefix}plots`);
     var plotContainer = $plots.find('.plot')[0];
+    var $downloadCheckbox = $plots.find('.download-checkbox')[0];
 
     $plots.on('click', '.uncertainty', function (event) {
       emptyNode(plotContainer);
@@ -371,7 +374,7 @@
         self.skeletonSource.getSelectedSkeletons(),
         {uncertainty: {max: linspace(0, 1, 20)}},
         '',
-        $plots.find('.download-checkbox')[0].checked
+        $downloadCheckbox.checked
       );
     });
 
@@ -382,7 +385,7 @@
         self.skeletonSource.getSelectedSkeletons(),
         {sizePx: {min: linspace(0, 10000, 20)}},
         '',
-        $plots.find('.download-checkbox')[0].checked
+        $downloadCheckbox.checked
       );
     });
 
@@ -393,7 +396,7 @@
         self.skeletonSource.getSelectedSkeletons(),
         {slices: {min: linspace(1, 10, 10, true)}},
         '',
-        $plots.find('.download-checkbox').checked
+        $downloadCheckbox.checked
       );
     });
   };
@@ -762,7 +765,7 @@
 
     return Promise.all(skelIDs.map(self.getConnectorsSynapsesForSkel.bind(self)))
       .then(function(dataBySkel) {
-        var results = {};
+        var results = {constraints: constraints};
 
         var data = dataBySkel.reduce(function(obj, resultsForSkel) {
           return {
@@ -816,8 +819,8 @@
         }
 
         // assumes traced as ground truth
-        results.detectionPrecision = results.detectedAndTraced / results.totalDetected || 0;
-        results.detectionRecall = results.tracedAndDetected / results.totalTraced || 0;
+        results.detectionPrecision = results.totalDetected ? results.detectedAndTraced / results.totalDetected : 1;
+        results.detectionRecall = results.totalTraced ? results.tracedAndDetected / results.totalTraced : 1;
 
         return results;
       });
@@ -853,6 +856,7 @@
         });
 
         return {
+          constraints: constraints,
           totalTraced: connSet.size,
           totalDetected: detectedSet.size,
           tracedAndDetected: connSet.intersection(detectedConns).size,
@@ -903,6 +907,8 @@
         document.getElementById(self.idPrefix + 'detected-and-traced').innerText = analysisResults.detectedAndTraced;
         document.getElementById(self.idPrefix + 'double-annotated').innerText = analysisResults.multiAnnotatedSynapses;
         document.getElementById(self.idPrefix + 'stitch-error').innerText = analysisResults.stitchingErrors;
+        document.getElementById(self.idPrefix + 'detection-precision').innerText = analysisResults.detectionPrecision;
+        document.getElementById(self.idPrefix + 'detection-recall').innerText = analysisResults.detectionRecall;
       });
   };
 
@@ -953,13 +959,21 @@
     this.sweepConstraints(skelIDs, constraintsToSweep)
       .then(function(analysisResults){
         if (download) {
-          saveAs(new Blob([analysisResults], {type: 'text/json'}), 'analysisresults.json');
+          saveAs(new Blob([JSON.stringify(analysisResults, null, 2)], {type: 'text/json'}), 'analysisresults.json');
         }
 
-        var PADDING = 80;
+        // in px
+        var margins = {
+          top: 20,
+          left: 70,
+          bottom: 70,
+          right: 20
+        };
 
-        var h = container.offsetHeight;
-        var w = container.offsetWidth;
+        var $container = $(container);
+
+        var h = $container.height() - margins.top - margins.bottom;
+        var w = $container.width() - margins.left - margins.right;
 
         var svg = d3.select(container)
           .append('svg')
@@ -968,11 +982,11 @@
 
         var xScale = d3.scale.linear()
           .domain([0, 1])
-          .rangeRound([PADDING, w]);
+          .rangeRound([margins.left, container.offsetWidth - margins.right]);
 
         var yScale = d3.scale.linear()
           .domain([0, 1])
-          .rangeRound([h, PADDING]);
+          .rangeRound([container.offsetHeight - margins.bottom, margins.top]);
 
         // x axis
         svg.append('g')
@@ -981,12 +995,14 @@
               .scale(xScale)
               .orient('bottom')
           )
-          .attr("transform", `translate(0, ${h - PADDING})`);
+          .attr("transform", `translate(0, ${yScale(0)})`);
 
         svg.append('text')
-          .attr("transform", `translate(${w/2}, ${h - PADDING/2})`)
+          .attr('x', xScale(0.5))
+          .attr('y', yScale(-0.1))
           .style('text-anchor', 'middle')
-          .text('Recall');
+          .style('alignment-baseline', 'central')
+          .text('recall');
 
         // y axis
         svg.append('g')
@@ -995,14 +1011,13 @@
               .scale(yScale)
               .orient('left')
           )
-          .attr("transform", `translate(${PADDING}, ${-PADDING})`);
+          .attr("transform", `translate(${xScale(0)}, 0)`);
 
         svg.append('text')
-          .attr("transform", `rotate(-90)`)
-          .attr('x', -h/2) // I have no idea how this works
-          .attr('y', PADDING/2)
+          .attr("transform", `translate(${xScale(-0.1)}, ${yScale(0.5)})rotate(-90)`)
           .style('text-anchor', 'middle')
-          .text('Precision');
+          .style('alignment-baseline', 'central')
+          .text('precision');
 
         var line = d3.svg.line()
           .x(function(d){return xScale(d.detectionRecall);})
