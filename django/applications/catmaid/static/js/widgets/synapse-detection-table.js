@@ -8,8 +8,6 @@
   var CACHE_TIMEOUT = 30*60*1000;  // 30 minutes
   var BASENAME = 'synapselabels.hdf5';  // todo: remove this
 
-  var Z_OFFSET_PX = -121;  // todo: remove this
-
   var SynapseDetectionTable = function() {
     this.widgetID = this.registerInstance();
     this.idPrefix = `synapse-detection-table${this.widgetID}-`;
@@ -339,10 +337,8 @@
 
       var stackViewer = project.getStackViewers()[0];
 
-      // todo: resolve offset
-
       stackViewer.moveToPixel(
-        'z' in coords ? coords.z + Z_OFFSET_PX : stackViewer.z,
+        'z' in coords ? coords.z : stackViewer.z,
         'y' in coords ? coords.y : stackViewer.y,
         'x' in coords ? coords.x : stackViewer.x,
         's' in coords ? coords.s : stackViewer.s
@@ -496,17 +492,16 @@
   var synapseInfoToBboxProject = function(synapseInfo) {
     var stack = project.getStackViewers()[0].primaryStack;
 
-    // todo: handle offset better
     var bounds = stack.createStackToProjectBox({
         min: {
           x: synapseInfo.bounds.min.x,
           y: synapseInfo.bounds.min.y,
-          z: synapseInfo.bounds.min.z + Z_OFFSET_PX
+          z: synapseInfo.bounds.min.z
         },
         max: {
           x: synapseInfo.bounds.max.x,
           y: synapseInfo.bounds.max.y,
-          z: synapseInfo.bounds.max.z + Z_OFFSET_PX
+          z: synapseInfo.bounds.max.z
         }
       });
 
@@ -649,10 +644,10 @@
 
             rowsObj[synID] = {
               detectedSynapseID: synID,
-              coords: {  // todo: does this include offset?
+              coords: {
                 x: responseRow.x_px,
                 y: responseRow.y_px,
-                z: responseRow.z_px,  // todo: add 0.5?
+                z: responseRow.z_px,
               },
               bounds: {
                 min: {
