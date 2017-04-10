@@ -131,8 +131,7 @@
       },
       contentID: this.idPrefix + 'content',
       createContent: function(container) {
-        var self = this;
-
+        //language=HTML
         container.innerHTML = `
           <table cellpadding="0" cellspacing="0" border="0" class="display" id="${tableID}"> 
             <thead> 
@@ -145,7 +144,8 @@
                 <th>uncertainty</th> 
                 <th>size (px)</th> 
                 <th>slices</th> 
-                <th>associated connectors</th> 
+                <th>associated connectors <input type="text" id="${self.idPrefix}search-conn-id"
+                  value="Search" class="search_init"></th> 
               </tr> 
             </thead> 
             <tfoot> 
@@ -197,15 +197,6 @@
           <br>
           
           <table>
-            <caption>Quick analysis results</caption>
-            <tr><td>Total traced</td><td id="${self.idPrefix}quick-total-traced">0</td></tr>
-            <tr><td>Total detected</td><td id="${self.idPrefix}quick-total-detected">0</td></tr>
-            <tr><td>Connectors associated with detected</td><td id="${self.idPrefix}quick-intersection">0</td></tr>
-          </table>
-          
-          <br>
-          
-          <table>
             <caption>Analysis results</caption>
             <tr><td>Total traced</td><td id="${self.idPrefix}total-traced">0</td></tr>
             <tr><td>Total detected</td><td id="${self.idPrefix}total-detected">0</td></tr>
@@ -219,18 +210,24 @@
           
           <br>
           
+          <div id="${self.idPrefix}sweep-constants">
+            <label>Uncertainty: <input class="uncertainty" type="number"></label>
+            <label>Size: <input class="sizePx" type="number"></label>
+            <label>Slices: <input class="slices" type="number"></label>
+          </div>
+          
+          <br>
+          
           <div id="${self.idPrefix}plots">
             <label>Download results: <input type="checkbox" class="download-checkbox"></label>
             <br>
             <button class="uncertainty">Plot precision/recall for uncertainty</button>
-            <button class="size">Plot precision/recall for synapse size</button>
+            <button class="sizePx">Plot precision/recall for synapse size</button>
             <button class="slices">Plot precision/recall for synapse slices</button>
             <div style="width:600px; height:600px" class="plot"></div>
           </div>
-          
-          
         `;
-      },
+},
       init: function() {
         this.init(project.getId());
       }
@@ -296,7 +293,11 @@
         {
           data: 'associatedConnIDs',
           render: function(data, type, row, meta) {
-            return data.size;
+            if (type === 'filter') {
+              return ` ${Array.from(data).join(' ')} `;
+            } else {
+              return data.size;
+            }
           },
           orderable: true,
           className: 'center'
@@ -304,16 +305,15 @@
       ]
     });
 
-    $(`#${self.idPrefix}search-input-label`).keydown(function (event) {
-      // filter table by tag text on hit enter
+    $(`#${self.idPrefix}search-conn-id`).keydown(function (event) {
       if (event.which == 13) {
         event.stopPropagation();
         event.preventDefault();
         // Filter with a regular expression
-        var filter_searchtag = event.currentTarget.value;
+        var filter_connID = event.currentTarget.value;
         self.oTable
           .column(event.currentTarget.closest('th'))
-          .search(filter_searchtag, true, false)
+          .search(` ${filter_connID} `, false, false)
           .draw();
       }
     });
@@ -367,23 +367,54 @@
     var plotContainer = $plots.find('.plot')[0];
     var $downloadCheckbox = $plots.find('.download-checkbox')[0];
 
+    var $sweepConstants = $(`#${self.idPrefix}sweep-constants`);
+
+    var getPrecisionRecallConstants = function() {
+      var obj = {};
+      var val;
+
+      // uncertainty
+      val = Number($sweepConstants.find('.uncertainty').val());
+      if (val) {
+        obj.uncertainty = {max: [val]};
+      }
+
+      // sizePx
+      val = Number($sweepConstants.find('.sizePx').val());
+      if (val) {
+        obj.sizePx = {min: [val]};
+      }
+
+      // slices
+      val = Number($sweepConstants.find('.slices').val());
+      if (val) {
+        obj.slices = {min: [val]};
+      }
+
+      return obj;
+    };
+
     $plots.on('click', '.uncertainty', function (event) {
       emptyNode(plotContainer);
+      var constraints = getPrecisionRecallConstants();
+      constraints.uncertainty = {max: linspace(0, 1, 20)};
       self.plotConstraintSweep(
         plotContainer,
         self.skeletonSource.getSelectedSkeletons(),
-        {uncertainty: {max: linspace(0, 1, 20)}},
+        constraints,
         '',
         $downloadCheckbox.checked
       );
     });
 
-    $plots.on('click', '.size', function (event) {
+    $plots.on('click', '.sizePx', function (event) {
       emptyNode(plotContainer);
+      var constraints = getPrecisionRecallConstants();
+      constraints.sizePx = {min: linspace(0, 10000, 20)};
       self.plotConstraintSweep(
         plotContainer,
         self.skeletonSource.getSelectedSkeletons(),
-        {sizePx: {min: linspace(0, 10000, 20)}},
+        constraints,
         '',
         $downloadCheckbox.checked
       );
@@ -391,10 +422,12 @@
 
     $plots.on('click', '.slices', function (event) {
       emptyNode(plotContainer);
+      var constraints = getPrecisionRecallConstants();
+      constraints.slices = {min: linspace(1, 10, 10, true)};
       self.plotConstraintSweep(
         plotContainer,
         self.skeletonSource.getSelectedSkeletons(),
-        {slices: {min: linspace(1, 10, 10, true)}},
+        constraints,
         '',
         $downloadCheckbox.checked
       );
@@ -654,7 +687,7 @@
 
             slices[synID].add(responseRow.z_px);
             rowsObj[synID].slices = slices[synID].size;
-            rowsObj[synID].uncertainty = addToMean(rowsObj[synID].uncertainty, counts[synID], responseRow.detection_uncertainty);
+            rowsObj[synID].uncertainty = Math.max(rowsObj[synID].uncertainty, responseRow.detection_uncertainty);
 
             rowsObj[synID].bounds = unionBoundingBox(
               rowsObj[synID].bounds,
@@ -778,8 +811,8 @@
           return set.add(connInfo.connID);
         }, new Set());
 
-        results.totalTraced = data.connectors.length;
-        results.totalDetected = 0;
+        results.totalTraced = data.connectors.length;  // number of connectors
+        results.totalDetected = 0;  // number of detected synapses (= length(unique(synapseIDs)))
 
         results.tracedAndDetected = 0;
         results.detectedAndTraced = 0;
@@ -891,13 +924,6 @@
 
     var skels = self.skeletonSource.getSelectedSkeletons();
     var constraints = self.getAnalysisConstraints();
-
-    self.quickAnalyse(skels, constraints)
-      .then(function(analysisResults) {
-        document.getElementById(self.idPrefix + 'quick-total-traced').innerText = analysisResults.totalTraced;
-        document.getElementById(self.idPrefix + 'quick-total-detected').innerText = analysisResults.totalDetected;
-        document.getElementById(self.idPrefix + 'quick-intersection').innerText = analysisResults.tracedAndDetected;
-      });
 
     self.analyse(skels, constraints)
       .then(function (analysisResults) {
