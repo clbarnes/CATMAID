@@ -68,7 +68,7 @@ def get_tile(request, project_id=None, stack_id=None):
     with closing(h5py.File(fpath, 'r')) as hfile:
         hdfpath = 'volume'
         image_data=hfile[hdfpath]
-        data=image_data[y:y+height,x:x+width, z]
+        data=image_data[z, y:y+height,x:x+width]
 
         # Split the 32-bit integers into 4x8-bit integer arrays, as per a comment on this stackoverflow question
         # N.B. little-endian
