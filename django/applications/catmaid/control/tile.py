@@ -9,6 +9,7 @@ import base64
 from django.conf import settings
 from django.http import HttpResponse, JsonResponse
 import pandas as pd
+import psycopg2
 
 from catmaid.models import UserRole, TILE_SOURCE_TYPES
 from catmaid.control.common import ConfigurationError
@@ -66,29 +67,31 @@ def get_tile(request, project_id=None, stack_id=None):
         # return HttpResponse(json.dumps({'error': 'HDF5 file does not exists: {0}'.format(fpath)}))
 
     with closing(h5py.File(fpath, 'r')) as hfile:
-        intmax = np.iinfo(np.uint8).max
-
         hdfpath = 'volume'
         image_data = hfile[hdfpath]
-        data = image_data[z, y:y + height, x:x + width]
+        data = np.array(image_data[z, y:y + height, x:x + width])
 
-        thresholded_data = data.astype(bool) * (intmax // 2)
-        split_data = np.stack((thresholded_data,)*3 + (np.ones(data.shape) * intmax,), 2).astype(np.uint8)
+    intmax = np.iinfo(np.uint8).max
+    # todo: replace with database lookups for mapping
+    data[data > 1] = intmax // 2  # uniform synapse colour
+    first_color = data.copy()
+    data[data == 1] = 0
+    split_data = np.stack((first_color, ) + (data,)*2 + (np.ones(data.shape) * intmax,), 2).astype(np.uint8)
 
-        # Split the 32-bit integers into 4x8-bit integer arrays, as per a comment on this stackoverflow question
-        # N.B. little-endian
-        # https://stackoverflow.com/questions/25298592
-        # split_data = data.view(np.uint8).reshape(data.shape + (4,))
-        # split_data[:, :, 3] = np.iinfo(np.uint8).max  # set alpha channel to max
-        # np.save(os.path.join(settings.HDF5_STORAGE_PATH, '{}-{}-{}_raw.npy'.format(x, y, z)), data)
+    # Split the 32-bit integers into 4x8-bit integer arrays, as per a comment on this stackoverflow question
+    # N.B. little-endian
+    # https://stackoverflow.com/questions/25298592
+    # split_data = data.view(np.uint8).reshape(data.shape + (4,))
+    # split_data[:, :, 3] = np.iinfo(np.uint8).max  # set alpha channel to max
+    # np.save(os.path.join(settings.HDF5_STORAGE_PATH, '{}-{}-{}_raw.npy'.format(x, y, z)), data)
 
-        pil_image = Image.frombuffer('RGBA', (width, height), split_data, 'raw', 'RGBA', 0, 1)
-        # np.save(os.path.join(settings.HDF5_STORAGE_PATH, '{}-{}-{}_split.npy'.format(x, y, z)), split_data)
-        # pil_image.save(os.path.join(settings.HDF5_STORAGE_PATH, '{}-{}-{}.png'.format(x, y, z)))
-        response = HttpResponse(content_type="image/png")
-        response['access-control-allow-origin'] = '*'
-        pil_image.save(response, "PNG")
-        return response
+    pil_image = Image.frombuffer('RGBA', (width, height), split_data, 'raw', 'RGBA', 0, 1)
+    # np.save(os.path.join(settings.HDF5_STORAGE_PATH, '{}-{}-{}_split.npy'.format(x, y, z)), split_data)
+    # pil_image.save(os.path.join(settings.HDF5_STORAGE_PATH, '{}-{}-{}.png'.format(x, y, z)))
+    response = HttpResponse(content_type="image/png")
+    response['access-control-allow-origin'] = '*'
+    pil_image.save(response, "PNG")
+    return response
 
 
 @requires_user_role([UserRole.Browse])
