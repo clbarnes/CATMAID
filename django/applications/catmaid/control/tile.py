@@ -71,12 +71,18 @@ def get_tile(request, project_id=None, stack_id=None):
         data = np.array(image_data[z, y:y + height, x:x + width])
 
     intmax = np.iinfo(np.uint8).max
-    # todo: replace with database lookups for mapping
-    data[data > 1] = intmax // 2  # uniform synapse colour
-    first_color = data.copy()
-    data[data == 1] = 0
-    split_data = np.stack((first_color, ) + (data,)*2 + (np.ones(data.shape) * intmax,), 2).astype(np.uint8)
+    # todo: replace with database lookups for mapping?
 
+    split_data = np.empty((height, width, 4), dtype=np.uint8)
+    split_data[:, :, 3] = intmax
+
+    # uniform synapse colour
+    # data[data > 1] = intmax // 2
+    # first_color = data.copy()
+    # data[data == 1] = 0
+    # split_data = np.stack((first_color, ) + (data,)*2 + (np.ones(data.shape) * intmax,), 2).astype(np.uint8)
+
+    # convert 32-bit integer labels
     # Split the 32-bit integers into 4x8-bit integer arrays, as per a comment on this stackoverflow question
     # N.B. little-endian
     # https://stackoverflow.com/questions/25298592
@@ -84,7 +90,16 @@ def get_tile(request, project_id=None, stack_id=None):
     # split_data[:, :, 3] = np.iinfo(np.uint8).max  # set alpha channel to max
     # np.save(os.path.join(settings.HDF5_STORAGE_PATH, '{}-{}-{}_raw.npy'.format(x, y, z)), data)
 
-    pil_image = Image.frombuffer('RGBA', (width, height), split_data, 'raw', 'RGBA', 0, 1)
+    # convert arbitrary-bit integer labels (>=32bit)
+    uint8_data = data.view(np.uint8)
+    stacked_uint8_data = uint8_data.reshape(data.shape + (data.dtype.itemsize, ))
+    truncated_uint8_data = stacked_uint8_data[:, :, :3]
+    split_data[:, :, :3] = truncated_uint8_data
+
+    # pil_image = Image.fromarray(truncated_uint8_data, mode='RGB')
+    pil_image = Image.fromarray(split_data, mode='RGBA')
+
+    # pil_image = Image.frombuffer('RGBA', (width, height), split_data, 'raw', 'RGBA', 0, 1)
     # np.save(os.path.join(settings.HDF5_STORAGE_PATH, '{}-{}-{}_split.npy'.format(x, y, z)), split_data)
     # pil_image.save(os.path.join(settings.HDF5_STORAGE_PATH, '{}-{}-{}.png'.format(x, y, z)))
     response = HttpResponse(content_type="image/png")
