@@ -50,12 +50,13 @@ def get_tile(request, project_id=None, stack_id=None):
     z = int(request.GET.get('z', '0'))
     col = request.GET.get('col', 'y')
     row = request.GET.get('row', 'x')
-    file_extension = request.GET.get('file_extension', 'png')
+    file_extension = request.GET.get('file_extension', 'hdf5')
     basename = request.GET.get('basename', 'raw')
 
     # need to know the stack name
     # fpath=os.path.join( settings.HDF5_STORAGE_PATH, '{0}_{1}_{2}.hdf'.format( project_id, stack_id, basename ) )
-    fpath=os.path.join( settings.HDF5_STORAGE_PATH, '{}_{}'.format( project_id, basename ) )
+    outer_name, inner_path = basename.split('__')
+    fpath=os.path.join(settings.HDF5_STORAGE_PATH, '{}_{}.{}'.format(project_id, outer_name, file_extension))
 
     if not os.path.exists( fpath ):
         data=np.zeros( (height, width) )
@@ -66,41 +67,30 @@ def get_tile(request, project_id=None, stack_id=None):
         # return HttpResponse(json.dumps({'error': 'HDF5 file does not exists: {0}'.format(fpath)}))
 
     with closing(h5py.File(fpath, 'r')) as hfile:
-        hdfpath = 'slice_labels'
-        image_data = hfile[hdfpath]
+        image_data = hfile[inner_path]
         data = np.array(image_data[z, y:y + height, x:x + width])
 
     intmax = np.iinfo(np.uint8).max
-    # todo: replace with database lookups for mapping?
+    img_arr = np.ones((height, width, 4), dtype=np.uint8)*intmax
 
-    split_data = np.empty((height, width, 4), dtype=np.uint8)
-    split_data[:, :, 3] = intmax
-
-    # uniform synapse colour
-    # data[data > 1] = intmax // 2
-    # first_color = data.copy()
-    # data[data == 1] = 0
-    # split_data = np.stack((first_color, ) + (data,)*2 + (np.ones(data.shape) * intmax,), 2).astype(np.uint8)
-
-    # convert 32-bit integer labels
-    # Split the 32-bit integers into 4x8-bit integer arrays, as per a comment on this stackoverflow question
-    # N.B. little-endian
-    # https://stackoverflow.com/questions/25298592
-    # split_data = data.view(np.uint8).reshape(data.shape + (4,))
-    # split_data[:, :, 3] = np.iinfo(np.uint8).max  # set alpha channel to max
-    # np.save(os.path.join(settings.HDF5_STORAGE_PATH, '{}-{}-{}_raw.npy'.format(x, y, z)), data)
-
-    # convert arbitrary-bit integer labels (>=32bit)
-    uint8_data = data.view(np.uint8)
-    stacked_uint8_data = uint8_data.reshape(data.shape + (data.dtype.itemsize, ))
-    truncated_uint8_data = stacked_uint8_data[:, :, :3]
-    split_data[:, :, :3] = truncated_uint8_data
+    if 'label' in inner_path:
+        # assume XY data, int>32
+        # truncate data to make low-fidelity probably-not-unique labels
+        uint8_data = data.view(np.uint8)
+        stacked_uint8_data = uint8_data.reshape(data.shape + (data.dtype.itemsize, ))
+        depth = min(3, data.dtype.itemsize)
+        truncated_uint8_data = stacked_uint8_data[:, :, :depth]
+        # todo: label mapping?
+        img_arr[:, :, :depth] = truncated_uint8_data
+    elif np.issubdtype(data.dtype, float):
+        # assume XYC (RGB) data between 0 and 1
+        img_arr[:, :, :3] = data[:, :, :3] * intmax
 
     # pil_image = Image.fromarray(truncated_uint8_data, mode='RGB')
-    pil_image = Image.fromarray(split_data, mode='RGBA')
+    pil_image = Image.fromarray(img_arr, mode='RGBA')
 
-    # pil_image = Image.frombuffer('RGBA', (width, height), split_data, 'raw', 'RGBA', 0, 1)
-    # np.save(os.path.join(settings.HDF5_STORAGE_PATH, '{}-{}-{}_split.npy'.format(x, y, z)), split_data)
+    # pil_image = Image.frombuffer('RGBA', (width, height), img_arr, 'raw', 'RGBA', 0, 1)
+    # np.save(os.path.join(settings.HDF5_STORAGE_PATH, '{}-{}-{}_split.npy'.format(x, y, z)), img_arr)
     # pil_image.save(os.path.join(settings.HDF5_STORAGE_PATH, '{}-{}-{}.png'.format(x, y, z)))
     response = HttpResponse(content_type="image/png")
     response['access-control-allow-origin'] = '*'
