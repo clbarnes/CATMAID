@@ -66,7 +66,7 @@ def get_tile(request, project_id=None, stack_id=None):
         # return HttpResponse(json.dumps({'error': 'HDF5 file does not exists: {0}'.format(fpath)}))
 
     with closing(h5py.File(fpath, 'r')) as hfile:
-        hdfpath = 'volume'
+        hdfpath = 'slice_labels'
         image_data = hfile[hdfpath]
         data = np.array(image_data[z, y:y + height, x:x + width])
 
