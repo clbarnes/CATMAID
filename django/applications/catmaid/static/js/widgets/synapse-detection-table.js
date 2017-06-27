@@ -143,8 +143,8 @@
                 </th> 
                 <th>uncertainty</th> 
                 <th>size (px)</th> 
-                <th>slices</th> 
                 <th>contact area (px)</th> 
+                <th>slices</th> 
                 <th>associated connectors <input type="text" id="${self.idPrefix}search-conn-id"
                   value="Search" class="search_init"></th> 
               </tr> 
@@ -155,8 +155,8 @@
                 <th>skeleton ID</th> 
                 <th>uncertainty</th> 
                 <th>size (px)</th> 
-                <th>slices</th> 
                 <th>contact area (px)</th> 
+                <th>slices</th> 
                 <th>associated connectors</th> 
               </tr> 
             </tfoot> 
