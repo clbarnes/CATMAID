@@ -70,6 +70,7 @@
     this.oTable = null;
 
     this.workflowInfo = null;
+    this.getWorkflowInfo()  // caches result
   };
 
   $.extend(SynapseDetectionTable.prototype, new InstanceRegistry());
@@ -503,39 +504,6 @@
     var count = this.skeletonSource.getNumberOfSkeletons();
     var element = document.getElementById(this.idPrefix + 'source-controls');
     element.title = `${count} skeleton${count === 1 ? '' : 's'} selected`;
-  };
-
-  var addToMean = function(existingValue, existingCount, newValue) {
-    return (existingValue * existingCount + newValue) / (existingCount + 1);
-  };
-
-  /**
-   * @param synapseInfo
-   */
-  var synapseInfoToBboxProject = function(synapseInfo) {
-    var stack = project.getStackViewers()[0].primaryStack;
-
-    var bounds = stack.createStackToProjectBox({
-        min: {
-          x: synapseInfo.bounds.min.x,
-          y: synapseInfo.bounds.min.y,
-          z: synapseInfo.bounds.min.z
-        },
-        max: {
-          x: synapseInfo.bounds.max.x,
-          y: synapseInfo.bounds.max.y,
-          z: synapseInfo.bounds.max.z
-        }
-      });
-
-    return {
-      xmin: bounds.min.x,
-      ymin: bounds.min.y,
-      zmin: bounds.min.z,
-      xmax: bounds.max.x,
-      ymax: bounds.max.y,
-      zmax: bounds.max.z,
-    };
   };
 
   var connResponseToConnEdgeInfo = function(connEdgeResponse) {
@@ -981,21 +949,23 @@
     var startTime = Date.now();
     console.log('update started');
     this.oTable.clear();
-    return Promise.all(
-      this.skeletonSource
-        .getSelectedSkeletons()
-        .map(self.getSynapsesForSkel.bind(self))
-    ).then(function(rowsArr) {
-      for (var rowObjs of rowsArr) {
-        self.oTable.rows.add(rowObjs);
-      }
-      self.populateAnalysisResults();
-      self.setSkelSourceText();
-      console.log(`update took ${(Date.now() - startTime)/1000}s`);
-      console.log('drawing');
-      self.oTable.draw();
-    });
 
+    this.getWorkflowInfo().then(function(){
+      return Promise.all(
+        this.skeletonSource
+          .getSelectedSkeletons()
+          .map(self.getSynapsesForSkel.bind(self))
+      ).then(function(rowsArr) {
+        for (var rowObjs of rowsArr) {
+          self.oTable.rows.add(rowObjs);
+        }
+        self.populateAnalysisResults();
+        self.setSkelSourceText();
+        console.log(`update took ${(Date.now() - startTime)/1000}s`);
+        console.log('drawing');
+        self.oTable.draw();
+      });
+    });
   };
 
   SynapseDetectionTable.prototype.destroy = function() {
