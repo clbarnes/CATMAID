@@ -590,6 +590,7 @@
             skelID: skelID,
             associatedConnIDs: new Set()
           };
+          return obj;
         }, {});
       }).then(function (rowsObj) {
         return CATMAID.fetch(
