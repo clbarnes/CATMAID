@@ -533,7 +533,7 @@
 
     var promises = ['presynaptic_to', 'postsynaptic_to'].map(function(relationType) {
       return CATMAID.fetch(
-        project.id + '/connectors/', 'GET', {skeleton_ids: [skelID], relation_type: relationType, with_tags: false}
+        project.id + '/connectors', 'GET', {skeleton_ids: [skelID], relation_type: relationType, with_tags: false}
       ).then(function(response) {
         var outObj = response.links.reduce(function(obj, row) {
           obj[row[1]] = {connID: row[1], relationType: relationType};
@@ -570,7 +570,7 @@
     }
 
     return CATMAID.fetch(
-      `synapsesuggestor/analysis/${project.id}/skeleton-synapses/`, 'GET',
+      `synapsesuggestor/analysis/${project.id}/skeleton-synapses`, 'GET',
       {skeleton_id: skelID, workflow_id: self.workflowInfo.workflow_id}
       ).then(function(response){
         return response.data.reduce(function (obj, responseRow) {
