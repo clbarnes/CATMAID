@@ -6,7 +6,6 @@
   "use strict";
 
   var CACHE_TIMEOUT = 30*60*1000;  // 30 minutes
-  var BASENAME = 'synapselabels.hdf5';  // todo: remove this
 
   var SynapseDetectionTable = function() {
     this.widgetID = this.registerInstance();
@@ -69,6 +68,8 @@
     this.cache = {};
 
     this.oTable = null;
+
+    this.workflowInfo = null;
   };
 
   $.extend(SynapseDetectionTable.prototype, new InstanceRegistry());
@@ -142,6 +143,7 @@
                 <th>uncertainty</th> 
                 <th>size (px)</th> 
                 <th>slices</th> 
+                <th>contact area (px)</th> 
                 <th>associated connectors <input type="text" id="${self.idPrefix}search-conn-id"
                   value="Search" class="search_init"></th> 
               </tr> 
@@ -153,6 +155,7 @@
                 <th>uncertainty</th> 
                 <th>size (px)</th> 
                 <th>slices</th> 
+                <th>contact area (px)</th> 
                 <th>associated connectors</th> 
               </tr> 
             </tfoot> 
@@ -232,6 +235,20 @@
     };
   };
 
+  SynapseDetectionTable.prototype.getWorkflowInfo = function() {
+    if (this.workflowInfo) {
+      return Promise.resolve(this.workflowInfo)
+    } else {
+      var self = this;
+      var stackId = project.getStackViewers()[0].primaryStack.id;
+      return CATMAID.fetch(`synapsesuggestor/analysis/${project.id}/workflow-info`, 'GET', {stack_id: stackId})
+        .then(function(workflowInfo) {
+          self.workflowInfo = workflowInfo;
+          return workflowInfo;
+        })
+    }
+  };
+
   SynapseDetectionTable.prototype.init = function() {
     var self = this;
     var tableID = this.idPrefix + 'datatable';
@@ -279,6 +296,12 @@
         },
         {
           data: 'sizePx',
+          render: Math.floor,
+          orderable: true,
+          className: "center"
+        },
+        {
+          data: 'contactPx',
           render: Math.floor,
           orderable: true,
           className: "center"
@@ -529,63 +552,6 @@
     };
   };
 
-  var connsResponseToConnEdgeInfos = function(connEdgesResponse) {
-    return connEdgesResponse.map(connResponseToConnEdgeInfo);
-  };
-
-  /**
-   * Draw an approximate bounding box around the given detected synapse and see if it intersects with any
-   * manually traced connector.
-   *
-   * @param synapseInfo
-   * @return Array of Promises of connEdgeInfo objects
-   */
-  SynapseDetectionTable.prototype.getIntersectingConnectors = function(synapseInfo) {
-    var bbox = synapseInfoToBboxProject(synapseInfo);
-    return CATMAID.fetch(project.id + '/connectors/intersecting/', 'GET', bbox)
-      .then(connsResponseToConnEdgeInfos)
-      .then(function(connEdgeInfos) {
-        synapseInfo.intersectingConnectorEdges = connEdgeInfos;
-        return synapseInfo;
-      });
-  };
-
-  /**
-   * getIntersectingConnectors for many synapses at a time
-   *
-   * @param synapseInfosObj : object mapping synapse ID to synapseInfo object
-   * @return Promise of object mapping synapse ID to array of connEdgeInfo objects
-   */
-  SynapseDetectionTable.prototype.getIntersectingConnectorsMany = function(synapseInfosObj) {
-    var data = Object.keys(synapseInfosObj).reduce(function(obj, synID) {
-      obj[synID] = JSON.stringify(synapseInfoToBboxProject(synapseInfosObj[synID]));
-      return obj;
-    }, {});
-
-    return CATMAID.fetch(project.id + '/connectors/intersecting/many/', 'POST', data)
-      .then(function(response) {
-        return Object.keys(response).reduce(function(obj, synID){
-          obj[synID] = connsResponseToConnEdgeInfos(response[synID]);
-          return obj;
-        }, {});
-      });
-  };
-
-  var unionBoundingBox = function(bbox1, bbox2) {
-    return {
-      min: {
-        x: Math.min(bbox1.min.x, bbox2.min.x),
-        y: Math.min(bbox1.min.y, bbox2.min.y),
-        z: Math.min(bbox1.min.z, bbox2.min.z),
-      },
-      max: {
-        x: Math.max(bbox1.max.x, bbox2.max.x),
-        y: Math.max(bbox1.max.y, bbox2.max.y),
-        z: Math.max(bbox1.max.z, bbox2.max.z),
-      }
-    };
-  };
-
   SynapseDetectionTable.prototype.getConnectorsForSkel = function(skelID) {
     var self = this;
 
@@ -616,6 +582,14 @@
     });
   };
 
+  var objZip = function(keys, values) {
+    var obj = {};
+    for (var i = 0; i < Math.min([keys.length, values.length]); i++) {
+      obj[keys[i]] = values[i]
+    }
+    return obj;
+  };
+
   SynapseDetectionTable.prototype.getSynapsesForSkel = function(skelID) {
     var self = this;
 
@@ -627,101 +601,49 @@
       this.cache[skelID] = {detections: {}, connectors: {}};
     }
 
-    return CATMAID.fetch(project.id + '/skeleton/auto-synapses/', 'GET', {skid: skelID, basename: BASENAME})
-      .then(function(response){
-        var counts = {};
-        var rowsObj = {};
-        var slices = {};
-        var biggestSlice = {};
-
-        for (var responseRow of response) {
-          var synID = responseRow.synapse_id;
-          if (!counts[synID]) {
-            counts[synID] = 1;
-            slices[synID] = new Set([responseRow.z_px]);
-
-            biggestSlice[synID] = responseRow.size_px;
-
-            rowsObj[synID] = {
-              detectedSynapseID: synID,
-              coords: {
-                x: responseRow.x_px,
-                y: responseRow.y_px,
-                z: responseRow.z_px,
-              },
-              bounds: {
-                min: {
-                  x: responseRow.xmin,
-                  y: responseRow.ymin,
-                  z: responseRow.z_px,
-                },
-                max: {
-                  x: responseRow.xmax,
-                  y: responseRow.ymax,
-                  z: responseRow.z_px,
-                }
-              },
-              sizePx: responseRow.size_px,
-              slices: slices[synID].size,
-              uncertainty: responseRow.detection_uncertainty,
-              nodeID: responseRow.node_id,
-              skelID: responseRow.skeleton_id,
-              intersectingConnectorEdges: null,  // this is populated later
-              associatedConnIDs: null
-            };
-          } else {
-            rowsObj[synID].coords.x = addToMean(rowsObj[synID].coords.x, counts[synID], responseRow.x_px);
-            rowsObj[synID].coords.y = addToMean(rowsObj[synID].coords.y, counts[synID], responseRow.y_px);
-            rowsObj[synID].coords.z = addToMean(rowsObj[synID].coords.z, counts[synID], responseRow.z_px);
-            rowsObj[synID].sizePx += responseRow.size_px;
-
-            if (rowsObj[synID].sizePx > biggestSlice[synID]) {
-              biggestSlice[synID] = rowsObj[synID].sizePx;
-              rowsObj[synID].nodeID = responseRow.node_id;
-            }
-
-            slices[synID].add(responseRow.z_px);
-            rowsObj[synID].slices = slices[synID].size;
-            rowsObj[synID].uncertainty = Math.max(rowsObj[synID].uncertainty, responseRow.detection_uncertainty);
-
-            rowsObj[synID].bounds = unionBoundingBox(
-              rowsObj[synID].bounds,
-              {
-                min: {
-                  x: responseRow.xmin,
-                  y: responseRow.ymin,
-                  z: responseRow.z_px,
-                },
-                max: {
-                  x: responseRow.xmax,
-                  y: responseRow.ymax,
-                  z: responseRow.z_px,
-                }
-              }
-            );
-
-            counts[synID] += 1;
+    return CATMAID.fetch(
+      `synapsesuggestor/analysis/${project.id}/skeleton-synapses/`, 'GET',
+      {skeleton_id: skelID, workflow_id: self.workflowInfo.workflow_id}
+      ).then(function(response){
+        return response.data.reduce(function (obj, responseRow) {
+          var responseRowObj = objZip(response.columns, responseRow);
+          obj[responseRowObj.synapse] = {
+            detectedSynapseID: responseRowObj.synapse,
+            coords: {
+              x: responseRowObj.xs,
+              y: responseRowObj.ys,
+              z: responseRowObj.zs,
+            },
+            sizePx: responseRowObj.size_px,
+            contactPx: responseRowObj.contact_px,
+            slices: new Set(responseRowObj.z_slices).size,
+            uncertainty: responseRowObj.uncertainty_avg,
+            nodeIDs: new Set(responseRowObj.nodes),
+            skelID: skelID,
+            associatedConnIDs: new Set()
+          };
+        }, {});
+      }).then(function (rowsObj) {
+        return CATMAID.fetch(
+          `synapsesuggestor/analysis/${project.id}/intersecting-connectors`, 'POST',
+          {workflow_id: self.workflowInfo.workflow_id, synapse_object_ids: Object.keys(rowsObj)}
+        ).then(function(response) {
+          for (var responseRow of response.data) {
+            var responseRowObj = objZip(response.columns, responseRow);
+            rowsObj[responseRowObj.synapse_id].associatedConnIDs.add(responseRowObj.connector_id);
           }
-        }
+          var rowsWithIntersecting = Object.keys(rowsObj)
+            .sort(function(a, b) {return a - b;})
+            .map(function(synID) {return rowsObj[synID]});
 
-        return self.getIntersectingConnectorsMany(rowsObj)
-          .then(function(synInfosObj) {
-            var rowsWithIntersecting = Object.keys(synInfosObj)
-              .sort(function(a, b) {return a - b;})
-              .map(function(synID) {
-                rowsObj[synID].intersectingConnectorEdges = synInfosObj[synID];
-                rowsObj[synID].associatedConnIDs = new Set(synInfosObj[synID].map(function(item){return item.connID;}));
-                return rowsObj[synID];
-              });
+          self.cache[skelID].detections = {
+            timestamp: Date.now(),
+            results: rowsWithIntersecting
+          };
 
-            self.cache[skelID].detections = {
-              timestamp: Date.now(),
-              results: rowsWithIntersecting
-            };
-
-            return rowsWithIntersecting;
-          });
-      });
+          return rowsWithIntersecting;
+        })
+    });
   };
 
   SynapseDetectionTable.prototype.getConnectorsSynapsesForSkel = function(skelID) {
