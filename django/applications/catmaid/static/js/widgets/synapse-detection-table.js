@@ -552,7 +552,7 @@
 
   var objZip = function(keys, values) {
     var obj = {};
-    for (var i = 0; i < Math.min([keys.length, values.length]); i++) {
+    for (var i = 0; i < Math.min(keys.length, values.length); i++) {
       obj[keys[i]] = values[i]
     }
     return obj;
