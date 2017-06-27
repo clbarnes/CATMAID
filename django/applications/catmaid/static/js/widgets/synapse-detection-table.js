@@ -952,7 +952,7 @@
 
     this.getWorkflowInfo().then(function(){
       return Promise.all(
-        this.skeletonSource
+        self.skeletonSource
           .getSelectedSkeletons()
           .map(self.getSynapsesForSkel.bind(self))
       ).then(function(rowsArr) {
