@@ -79,6 +79,22 @@
     return 'Synapse Detection Table ' + this.widgetID;
   };
 
+  /**
+   * Convert an ISO-8601 UTC time string into a shorter local time string.
+   *
+   * @param utcStr
+   */
+  var utcStrToLocalTime = function(utcStr) {
+    var d = new Date(utcStr);
+    var year, month, day, hour, minute;
+    year = d.getFullYear();
+    month = String(d.getMonth()+1).padStart(2, 0);
+    day = String(d.getDate()).padStart(2, 0);
+    hour = String(d.getHours()).padStart(2, 0);
+    minute = String(d.getMinutes()).padStart(2, 0);
+    return `${year}-${month}-${day} ${hour}:${minute}`;
+  };
+
   SynapseDetectionTable.prototype.repopulateAlgoSelect = function() {
     var self = this;
 
@@ -93,8 +109,8 @@
 
     this.workflowInfoOptions.forEach(function(item, i) {
       var option = document.createElement("option");
-      option.text = `${item.detection_algo_hash.slice(0, 7)} (${item.detection_algo_date}) - ` +
-        `${item.association_algo_hash.slice(0, 7)} (${item.association_algo_date})`;
+      option.text = `${item.detection_algo_hash.slice(0, 7)} (${utcStrToLocalTime(item.detection_algo_date)}) & ` +
+        `${item.association_algo_hash.slice(0, 7)} (${utcStrToLocalTime(item.association_algo_date)})`;
       option.value = `${item.detection_algo_hash}-${item.association_algo_hash}`;
       option.title = `Detection: ${item.detection_algo_notes}\nAssociation: ${item.association_algo_notes}`;
 
