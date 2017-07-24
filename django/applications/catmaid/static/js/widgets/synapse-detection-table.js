@@ -69,14 +69,43 @@
 
     this.oTable = null;
 
+    this.workflowInfoOptions = null;
     this.workflowInfo = null;
-    this.getWorkflowInfo()  // caches result
   };
 
   $.extend(SynapseDetectionTable.prototype, new InstanceRegistry());
 
   SynapseDetectionTable.prototype.getName = function() {
     return 'Synapse Detection Table ' + this.widgetID;
+  };
+
+  SynapseDetectionTable.prototype.repopulateAlgoSelect = function() {
+    var self = this;
+
+    var select = document.getElementById(self.idPrefix + 'algo-select');
+    while (select.lastChild) {
+      select.removeChild(select.lastChild);
+    }
+
+    if (!self.workflowInfo){
+      self.workflowInfo = this.workflowInfoOptions[0];
+    }
+
+    this.workflowInfoOptions.forEach(function(item, i) {
+      var option = document.createElement("option");
+      option.text = `${item.detection_algo_hash.slice(0, 7)} (${item.detection_algo_date}) - ` +
+        `${item.association_algo_hash.slice(0, 7)} (${item.association_algo_date})`;
+      option.value = `${item.detection_algo_hash}-${item.association_algo_hash}`;
+      option.title = `Detection: ${item.detection_algo_notes}\nAssociation: ${item.association_algo_notes}`;
+
+      if (i === 0) {
+        option.defaultSelected = true;
+      }
+      if (option.value === `${self.workflowInfo.detection_algo_hash}-${self.workflowInfo.association_algo_hash}`) {
+        option.selected = true;
+      }
+      select.appendChild(option);
+    });
   };
 
   SynapseDetectionTable.prototype.getWidgetConfiguration = function() {
@@ -120,6 +149,16 @@
           self.update();
         };
         controls.appendChild(refresh);
+
+        var algoLabel = document.createElement('label');
+        algoLabel.appendChild(document.createTextNode('Algorithms:'));
+        algoLabel.title = 'Algorithm combination used to detect synapses and associate them with skeletons';
+        controls.appendChild(algoLabel);
+
+        var algoSelect = document.createElement('select');
+        algoSelect.id = self.idPrefix + 'algo-select';
+        algoSelect.addEventListener('change', self.update.bind(self, true));
+        algoLabel.appendChild(algoSelect);
 
         var jsonButton = document.createElement('button');
         jsonButton.innerText = 'Download cache dump';
@@ -243,9 +282,11 @@
       var self = this;
       var stackId = project.getStackViewers()[0].primaryStack.id;
       return CATMAID.fetch(`synapsesuggestor/analysis/${project.id}/workflow-info`, 'GET', {stack_id: stackId})
-        .then(function(workflowInfo) {
-          self.workflowInfo = workflowInfo;
-          return workflowInfo;
+        .then(function(response) {
+          self.workflowInfoOptions = response.workflows;
+          self.workflowInfo = self.workflowInfo || response.workflows[0];
+          self.repopulateAlgoSelect();
+          return self.workflowInfo;
         })
     }
   };
@@ -253,6 +294,8 @@
   SynapseDetectionTable.prototype.init = function() {
     var self = this;
     var tableID = this.idPrefix + 'datatable';
+
+    self.getWorkflowInfo().then(self.repopulateAlgoSelect.bind(self));
 
     var $table = $('#' + tableID);
 
@@ -945,10 +988,16 @@
       });
   };
 
-  SynapseDetectionTable.prototype.update = function() {
+  SynapseDetectionTable.prototype.update = function(forceRefresh) {
     var self = this;
     var startTime = Date.now();
     console.log('update started');
+    if (forceRefresh) {
+      for (var skeletonId of Object.keys(self.cache)) {
+        self.cache[skeletonId].detections = null;
+        self.cache[skeletonId].connectors = null;
+      }
+    }
     this.oTable.clear();
 
     this.getWorkflowInfo().then(function(){
