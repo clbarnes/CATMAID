@@ -96,8 +96,8 @@
   };
 
   SynapseDetectionTable.prototype.setWorkflowInfoFromSelect = function() {
-    var value = document.getElementById(self.idPrefix + 'algo-select').value;
-    for (var workflowInfo of this.workflowInfo) {
+    var value = document.getElementById(this.idPrefix + 'algo-select').value;
+    for (var workflowInfo of this.workflowInfoOptions) {
       if (`${workflowInfo.detection_algo_hash}-${workflowInfo.association_algo_hash}` === value) {
         this.workflowInfo = workflowInfo;
         var flag = true;
