@@ -137,8 +137,8 @@
         option.selected = true;
       }
       select.appendChild(option);
-      self.setWorkflowInfoFromSelect()
     });
+    self.setWorkflowInfoFromSelect()
   };
 
   SynapseDetectionTable.prototype.getWidgetConfiguration = function() {
@@ -1034,7 +1034,7 @@
     this.oTable.clear();
 
     this.getWorkflowInfo().then(function(){
-      this.setWorkflowInfoFromSelect();
+      self.setWorkflowInfoFromSelect();
       return Promise.all(
         self.skeletonSource
           .getSelectedSkeletons()
