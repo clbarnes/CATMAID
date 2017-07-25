@@ -1026,10 +1026,7 @@
     var startTime = Date.now();
     console.log('update started');
     if (forceRefresh) {
-      for (var skeletonId of Object.keys(self.cache)) {
-        self.cache[skeletonId].detections = null;
-        self.cache[skeletonId].connectors = null;
-      }
+      self.cache = {};
     }
     this.oTable.clear();
 
