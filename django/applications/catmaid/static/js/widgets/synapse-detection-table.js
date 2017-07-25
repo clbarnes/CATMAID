@@ -95,6 +95,22 @@
     return `${year}-${month}-${day} ${hour}:${minute}`;
   };
 
+  SynapseDetectionTable.prototype.setWorkflowInfoFromSelect = function() {
+    var value = document.getElementById(self.idPrefix + 'algo-select').value;
+    for (var workflowInfo of this.workflowInfo) {
+      if (`${workflowInfo.detection_algo_hash}-${workflowInfo.association_algo_hash}` === value) {
+        this.workflowInfo = workflowInfo;
+        var flag = true;
+        break;
+      }
+    }
+    if (!flag) {
+      this.workflowInfo = this.workflowInfo || this.workflowInfoOptions[0]
+    }
+
+    return this.workflowInfo;
+  };
+
   SynapseDetectionTable.prototype.repopulateAlgoSelect = function() {
     var self = this;
 
@@ -121,6 +137,7 @@
         option.selected = true;
       }
       select.appendChild(option);
+      self.setWorkflowInfoFromSelect()
     });
   };
 
@@ -1017,6 +1034,7 @@
     this.oTable.clear();
 
     this.getWorkflowInfo().then(function(){
+      this.setWorkflowInfoFromSelect();
       return Promise.all(
         self.skeletonSource
           .getSelectedSkeletons()
