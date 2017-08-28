@@ -80,7 +80,7 @@
   };
 
   /**
-   * Convert an ISO-8601 UTC time string into a shorter local time string.
+   * Convert an ISO-8601 UTC time string into a local time string of format 'YYYY-mm-dd HH:MM'.
    *
    * @param utcStr
    */
@@ -95,6 +95,13 @@
     return `${year}-${month}-${day} ${hour}:${minute}`;
   };
 
+  /**
+   * Finds currently selected algorithm combination in the GUI select box and sets this.workflowInfo to be the
+   * option in this.workflowInfoOptions which matches the selected option. Also returns that workflowInfo. If this
+   * fails, the first (i.e. most recent) workflow is selected.
+   *
+   * @return {*|null}
+   */
   SynapseDetectionTable.prototype.setWorkflowInfoFromSelect = function() {
     var value = document.getElementById(this.idPrefix + 'algo-select').value;
     for (var workflowInfo of this.workflowInfoOptions) {
@@ -111,6 +118,9 @@
     return this.workflowInfo;
   };
 
+  /**
+   * Populates the algorithm select box with the algorithm combinations in this.workflowInfoOptions.
+   */
   SynapseDetectionTable.prototype.repopulateAlgoSelect = function() {
     var self = this;
 
@@ -302,12 +312,16 @@
           </div>
         `;
 },
-      init: function() {
-        this.init(project.getId());
-      }
+      init: self.init.bind(self)
     };
   };
 
+  /**
+   * Get the list of valid workflows (for this project and stack), cache it, populate the algorithm select element and
+   * select the first (i.e. most recent) for use with the table.
+   *
+   * @return {Promise.<*>}
+   */
   SynapseDetectionTable.prototype.getWorkflowInfo = function() {
     if (this.workflowInfo) {
       return Promise.resolve(this.workflowInfo)
@@ -324,11 +338,16 @@
     }
   };
 
+  /**
+   * Initialise the widget.
+   *
+   * Populate the algorithm select element, draw the table, and add listeners to buttons.
+   */
   SynapseDetectionTable.prototype.init = function() {
     var self = this;
     var tableID = this.idPrefix + 'datatable';
 
-    self.getWorkflowInfo().then(self.repopulateAlgoSelect.bind(self));
+    self.getWorkflowInfo();
 
     var $table = $('#' + tableID);
 
@@ -530,12 +549,29 @@
     });
   };
 
+  /**
+   * Remove all child nodes of given HTML element.
+   *
+   * @param element
+   * @return {*}
+   */
   var emptyNode = function(element) {
     while (element.lastChild) {
       element.removeChild(element.lastChild);
     }
+    return element;
   };
 
+  /**
+   * Return an array of numbers from 'start' to 'stop' (inclusive), of length 'count'. If 'round' is true, round each
+   * one.
+   *
+   * @param start
+   * @param stop
+   * @param count
+   * @param round
+   * @return {[*]}
+   */
   var linspace = function(start, stop, count, round) {
     var out = [start];
     var step = (stop - start) / (count-1);
@@ -626,6 +662,13 @@
     });
   };
 
+  /**
+   * Given arrays of keys and values, create an object {keys_1: values_1, keys_2: values_2} and so on.
+   *
+   * @param keys
+   * @param values
+   * @return {{}}
+   */
   var objZip = function(keys, values) {
     var obj = {};
     for (var i = 0; i < Math.min(keys.length, values.length); i++) {
