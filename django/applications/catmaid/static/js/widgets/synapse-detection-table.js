@@ -203,6 +203,22 @@
         algoSelect.addEventListener('change', self.update.bind(self, true));
         algoLabel.appendChild(algoSelect);
 
+        var toleranceLabel = document.createElement('label');
+        toleranceLabel.appendChild(document.createTextNode('Tolerance (nm):'));
+        toleranceLabel.title = '2D spatial tolerance, in nm, for determining whether a connector edge is associated' +
+          ' with a synapse';
+        controls.appendChild(toleranceLabel);
+
+        var toleranceInput = document.createElement('input');
+        toleranceInput.id = self.idPrefix + 'tolerance';
+        toleranceInput.type = 'text';
+        toleranceInput.size = 4;
+        toleranceInput.pattern = '\d*\.?\d*';
+        toleranceInput.value = 0;
+        toleranceInput.min = 0;
+        toleranceInput.addEventListener('change', self.update.bind(self, true));
+        toleranceLabel.append(toleranceInput);
+
         var jsonButton = document.createElement('button');
         jsonButton.innerText = 'Download cache dump';
         jsonButton.onclick = function() {
@@ -712,9 +728,10 @@
           return obj;
         }, {});
       }).then(function (rowsObj) {
+        var tolerance = Number(document.getElementById(self.idPrefix + 'tolerance').value);
         return CATMAID.fetch(
           `synapsesuggestor/analysis/${project.id}/intersecting-connectors`, 'POST',
-          {workflow_id: self.workflowInfo.workflow_id, synapse_object_ids: Object.keys(rowsObj)}
+          {workflow_id: self.workflowInfo.workflow_id, synapse_object_ids: Object.keys(rowsObj), tolerance: tolerance}
         ).then(function(response) {
           for (var responseRow of response.data) {
             var responseRowObj = objZip(response.columns, responseRow);
