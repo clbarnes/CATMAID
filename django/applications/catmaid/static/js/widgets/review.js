@@ -20,7 +20,6 @@
     self.current_segment = null;
     self.current_segment_index = 0;
     var end_puffer_count = 0,
-      autoCentering = true,
       followedUsers = [];
     // Set to true, if one moves beyond the current segment
     self.movedBeyondSegment = false;
@@ -42,6 +41,13 @@
     // Whether node selection should automatically scroll to the respective
     // segment.
     this.scrollToActiveSegment = true;
+    // Whether the review widget should center automatically when the user moves
+    // to a different node.
+    this.autoCentering = true;
+    // Whether single-node segments (e.g. result of node filter) should be
+    // removed from the listing if this node is also available in another,
+    // preferably longer segment.
+    this.pruneDuplicateSingleNodeSegments = true;
 
     // A set of filter rules to apply to the handled skeletons
     this.filterRules = [];
@@ -54,14 +60,6 @@
       this.projectId = project.id;
       followedUsers = [CATMAID.session.userid, 'whitelist'];
       this.redraw();
-    };
-
-    this.setAutoCentering = function(centering) {
-      autoCentering = centering ? true : false;
-    };
-
-    this.getAutoCentering = function() {
-      return autoCentering;
     };
 
     this.validSegment = function() {
@@ -124,8 +122,8 @@
         if (!SkeletonAnnotations.isRealNode(node.id)) {
           // Force re-focus on next step if the newly active virtual node is not
           // on the edge between parent and child.
-          var pID = SkeletonAnnotations.getParentOfVirtualNode(node.id);
-          var cID = SkeletonAnnotations.getChildOfVirtualNode(node.id);
+          var pID = parseInt(SkeletonAnnotations.getParentOfVirtualNode(node.id), 10);
+          var cID = parseInt(SkeletonAnnotations.getChildOfVirtualNode(node.id), 10);
           nodeId = pID;
           if (rNode && rNode.id != pID && rNode.id != cID) {
             this.segmentUnfocused = true;
@@ -215,15 +213,32 @@
     this.goToNodeOfSegmentSequence = function(node, forceCentering) {
       if (self.skeleton_segments===null)
         return;
-      var center = autoCentering || forceCentering;
+      var center = this.autoCentering || forceCentering;
       SkeletonAnnotations.staticMoveTo(
           (self.isZView() || center) ? node.z : project.coordinates.z,
           (self.isYView() || center) ? node.y : project.coordinates.y,
           (self.isXView() || center) ? node.x : project.coordinates.x)
       .then(function () {
-        SkeletonAnnotations.staticSelectNode( node.id, self.currentSkeletonId );
+        return SkeletonAnnotations.staticSelectNode( node.id, self.currentSkeletonId );
       })
-      .catch(CATMAID.handleError);
+      .catch(function(error) {
+        if (error instanceof CATMAID.Warning) {
+          // If all available tracing layers are hidden, don;t show the node not
+          // found warning.
+          var visibleTracingLayers = project.getStackViewers().reduce(function(tls, l) {
+            if (l instanceof CATMAID.TracingLayer && l.opacity > 0) {
+              tls.push(l);
+            }
+            return tls;
+          }, []);
+          if (visibleTracingLayers.length === 0) {
+            console.log("CATMAID Review - blocked warning, because no tracing layers is visible: " +
+                error.message);
+            return;
+          }
+        }
+        CATMAID.handleError(error);
+      });
     };
 
     this.moveNodeInSegmentBackward = function(advanceToNextUnfollowed) {
@@ -344,62 +359,68 @@
       }
 
       if (changeSelectedNode) {
-        var whitelist = this.getCurrentWhiteListAndFollowed();
-        var reviewedByTeam = reviewedByUserOrTeam.bind(self, CATMAID.session.userid, whitelist);
-
         // Find index of next real node that should be reviewed
         var newIndex = upstream ?
             Math.min(self.current_segment_index + 1, sequenceLength - 1) :
             Math.max(self.current_segment_index - 1, 0);
 
-        if (advanceToNextUnfollowed) {
-          // Advance index to the first node that is not reviewed by the current
-          // user or any review team member.
-          var i = newIndex;
-          if (upstream) {
-            while (i < sequenceLength) {
-              if (!sequence[i].rids.some(reviewedByTeam)) {
-                newIndex = i;
-                break;
-              }
-              i += 1;
-            }
-          } else {
-            while (i > 0) {
-              if (!sequence[i].rids.some(reviewedByTeam)) {
-                newIndex = i;
-                break;
-              }
-              i -= 1;
-            }
-          }
-        }
-
-        var ln, refIndex;
+        // Find the next real node
+        var fromNode, fromIndex, toIndex;
         if (skipStep) {
-          ln = skipStep;
-          refIndex = skipStep.refIndex;
-          // If the existing skipping step was created with the current node
-          // as source, the current test node needs to be the virtual node.
-          if (skipStep.to !== sequence[newIndex]) {
-            newIndex = upstream ? skipStep.refIndex : (skipStep.refIndex - 1);
-          }
+          fromIndex = self.current_segment_index;
+          fromNode = skipStep;
         } else {
-          refIndex = newIndex;
-          ln = upstream ? sequence[newIndex - 1] : sequence[newIndex + 1];
+          var whitelist = this.getCurrentWhiteListAndFollowed();
+          var reviewedByTeam = reviewedByUserOrTeam.bind(self, CATMAID.session.userid, whitelist);
+
+          // This only needs to be applied when no virtual node is selected,
+          // because moving from a virtual node to a real node requires the real
+          // node to become selected.
+          if (advanceToNextUnfollowed) {
+            // Advance index to the first node that is not reviewed by the current
+            // user or any review team member.
+            var i = newIndex;
+            if (upstream) {
+              while (i < sequenceLength) {
+                if (!sequence[i].rids.some(reviewedByTeam)) {
+                  newIndex = i;
+                  break;
+                }
+                i += 1;
+              }
+            } else {
+              while (i > 0) {
+                if (!sequence[i].rids.some(reviewedByTeam)) {
+                  newIndex = i;
+                  break;
+                }
+                i -= 1;
+              }
+            }
+          }
+
+          fromIndex = upstream ? Math.max(0, newIndex - 1) :
+              Math.min(sequenceLength - 1, newIndex + 1);
+          fromNode = sequence[fromIndex];
         }
 
-        var nn = sequence[newIndex];
+        toIndex = newIndex;
+        var toNode = sequence[toIndex];
 
         // Check if an intermediate step is required. If a sample step has
         // already been taken before, this step is the reference point for the
         // distance test.
-        skipStep = self.limitMove(ln, nn, refIndex, !upstream);
-        if (!skipStep) {
+        skipStep = self.limitMove(fromNode, toNode, toIndex, upstream);
+        if (skipStep) {
+          // For virtual nodes make sure the current segment index is set
+          // correctly (needed mainly if advanceToNextUnfollowed = true and a
+          // virtual node is selected next.
+          self.current_segment_index = fromIndex;
+        } else {
           // If a real node is next, update current segment index and check if
           // we are close to the segment end.
-          self.current_segment_index = newIndex;
-          self.warnIfNodeSkipsSections(ln);
+          self.current_segment_index = toIndex;
+          self.warnIfNodeSkipsSections(fromNode);
         }
       }
 
@@ -417,7 +438,7 @@
      * if the distance between both  above the maximum step distance. Steps are
      * sections in the currently focused stack.
      */
-    this.limitMove = function(from, to, refIndex, backwards) {
+    this.limitMove = function(from, to, toIndex, upstream) {
       var stackViewer = project.focusedStackViewer;
       var stack = stackViewer.primaryStack;
       // Get difference vector in stack space coordinates and check that not
@@ -428,8 +449,10 @@
       var toSZ = stack.projectToUnclampedStackZ(to.z, to.y, to.x);
       var zDiff = toSZ - fromSZ;
       var zDiffAbs = Math.abs(zDiff);
-      var prevIndex = backwards ? (refIndex + 1) : (refIndex - 1);
-      var suppressedZs = self.current_segment.sequence[prevIndex].sup.reduce(function (zs, s) {
+      var realFromIndex = upstream ? Math.max(0, toIndex - 1) :
+          Math.min(self.current_segment.sequence.length - 1, toIndex + 1);
+      var prevRealNode = self.current_segment.sequence[realFromIndex];
+      var suppressedZs = prevRealNode.sup.reduce(function (zs, s) {
         if (s[0] === stack.orientation) {
           var vncoord = [0, 0, 0];
           vncoord[2 - s[0]] = s[1];
@@ -478,18 +501,23 @@
         var yp = from.y + (to.y - from.y) * zRatio;
         var zp = from.z + (to.z - from.z) * zRatio;
 
-        var vnID = backwards ?
-          SkeletonAnnotations.getVirtualNodeID(to.id, from.id, xp, yp, zp) :
-          SkeletonAnnotations.getVirtualNodeID(from.id, to.id, xp, yp, zp);
+        var vnChildId, vnParentId;
+        if (upstream) {
+          vnChildId = prevRealNode.id;
+          vnParentId = to.id;
+        } else {
+          vnChildId = to.id;
+          vnParentId = prevRealNode.id;
+        }
+        var vnId = SkeletonAnnotations.getVirtualNodeID(vnChildId, vnParentId, xp, yp, zp);
 
         return {
-          id: vnID,
+          id: vnId,
           x: xp,
           y: yp,
           z: zp,
           stack: stack,
-          to: to,
-          refIndex: refIndex
+          to: to
         };
       } else {
         return null;
@@ -530,7 +558,7 @@
       var viewer = project.focusedStackViewer;
       var stack = project.focusedStackViewer.primaryStack;
       var validDistanced = segment[i][depthField] > segment[i-1][depthField] ?
-          stack.validZDistanceBefore(viewer.z) : stack.validZDistanceAfter(viewer.z);
+          viewer.validZDistanceBefore(viewer.z) : viewer.validZDistanceAfter(viewer.z);
       var targetZ = validDistanced ? viewer.z + validDistanced : viewer.z;
       // Move to location found
       project.moveTo(
@@ -773,13 +801,44 @@
       var nFilteredNodes = 0;
       if (activeNodeFilters) {
         var filterSegmentNodes = filterNodeSequence.bind(window, this.allowedNodes);
-        skeleton_data = skeleton_data.filter(function(segment) {
+        skeleton_data = skeleton_data.map(function(segment) {
           var newSequence = segment.sequence.filter(filterSegmentNodes);
           nFilteredNodes += segment.sequence.length - newSequence.length;
           segment.sequence = newSequence;
           segment.nr_nodes = newSequence.length;
+          return segment;
+        }).filter(function(segment) {
           return segment.nr_nodes > 0;
         });
+        if (this.pruneDuplicateSingleNodeSegments) {
+          // Sort segmends in descending order and remove single node segments
+          // that have been seen in longer segments. This is mainly a concern when
+          // node filters are in use and single node segments can occur.
+          var sortedSegments = skeleton_data.sort(function(a, b) {
+            if (a.nr_nodes > b.nr_nodes) {
+              return -1;
+            }
+            if (a.nr_nodes < b.nr_nodes) {
+              return 1;
+            }
+            return 0;
+          });
+          var seen = new Set();
+          skeleton_data = skeleton_data.filter(function(segment) {
+            var sequence = segment.sequence;
+            var nNodes = sequence.length;
+            if (nNodes === 1) {
+              if (seen.has(sequence[0].id)) {
+                ++nFilteredNodes;
+                return false;
+              }
+            }
+            for (var j=0, max=sequence.length; j<max; ++j) {
+              seen.add(sequence[j].id);
+            }
+            return true;
+          });
+        }
       }
 
       // Count which user reviewed how many nodes and map user ID vs object
@@ -987,10 +1046,10 @@
       if (subarborOnly) {
         subarborNodeId = SkeletonAnnotations.getActiveNodeId();
       }
-      this.startSkeletonToReview( skid, subarborNodeId );
+      this.startSkeletonToReview( skid, subarborNodeId, true );
     };
 
-    this.startSkeletonToReview = function( skid, nodeId ) {
+    this.startSkeletonToReview = function( skid, nodeId, forceRefresh ) {
       var dataChanged = false;
       if (!skid) {
         CATMAID.error('No skeleton ID provided for review.');
@@ -1004,8 +1063,13 @@
       if (!checkSkeletonID()) {
         return;
       }
+      if (dataChanged || forceRefresh) {
+        this.refresh();
+      }
+    };
 
-      if (dataChanged && this.filterRules.length > 0 && this.applyFilterRules) {
+    this.refresh = function() {
+      if (this.filterRules.length > 0 && this.applyFilterRules) {
         this.updateFilter();
       } else {
         this.update();
@@ -1034,7 +1098,7 @@
               "Remove all of my reviews": function () {
                 self.submit(CATMAID.makeURL(self.projectId + "/skeleton/" + self.currentSkeletonId + "/review/" + fnName), "POST", {},
                   function (json) {
-                    self.startReviewActiveSkeleton();
+                    self.refresh();
                   });
                 $(this).dialog('destroy');
               }
@@ -1198,6 +1262,15 @@
                 }
               }
             }
+          }, {
+            type: 'checkbox',
+            label: 'Hide duplicate one-node segments',
+            title: 'If node filters are in use, it can happen that single node segments remain. If these nodes are included in other visible longer segments, they will be hidden.',
+            value: this.pruneDuplicateSingleNodeSegments,
+            onclick: function() {
+              self.pruneDuplicateSingleNodeSegments = this.checked;
+              self.refresh();
+            }
           }
         ]);
         tabs['Node review'].dataset.mode = 'node-review';
@@ -1359,7 +1432,7 @@
               SkeletonAnnotations.staticMoveTo(json[3], json[2], json[1]);
             })
             .then(function() {
-              SkeletonAnnotations.staticSelectNode(tnid, skeleton_id);
+              return SkeletonAnnotations.staticSelectNode(tnid, skeleton_id);
             })
             .catch(CATMAID.handleError);
         });
@@ -1374,6 +1447,14 @@
         update: this.updateFilter.bind(this)
       }
     };
+  };
+
+  CATMAID.ReviewSystem.prototype.setAutoCentering = function(centering) {
+    this.autoCentering = !!centering;
+  };
+
+  CATMAID.ReviewSystem.prototype.getAutoCentering = function() {
+    return this.autoCentering;
   };
 
   /**
@@ -1682,6 +1763,8 @@
   CATMAID.Init.on(CATMAID.Init.EVENT_USER_CHANGED, CATMAID.ReviewSystem.Whitelist.refresh);
 
   CATMAID.registerWidget({
+    name: "Review Widget",
+    description: "Proofread a skeleton or a part of it",
     key: "review-system",
     creator: CATMAID.ReviewSystem,
     state: {
@@ -1693,7 +1776,8 @@
           persistReview: widget.persistReview,
           visibleReviewers: widget.visibleReviewers,
           scrollToActiveSegment: widget.scrollToActiveSegment,
-          applyFilterRules: widget.applyFilterRules
+          applyFilterRules: widget.applyFilterRules,
+          autoCentering: widget.autoCentering
         };
       },
       setState: function(widget, state) {
@@ -1704,6 +1788,7 @@
         CATMAID.tools.copyIfDefined(state, widget, 'visibleReviewers');
         CATMAID.tools.copyIfDefined(state, widget, 'scrollToActiveSegment');
         CATMAID.tools.copyIfDefined(state, widget, 'applyFilterRules');
+        CATMAID.tools.copyIfDefined(state, widget, 'autoCentering');
       }
     }
   });

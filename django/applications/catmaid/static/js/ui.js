@@ -21,6 +21,7 @@
     var ctrlKeyDown = false;
     var altKeyDown = false;
     var contextMenuEnabled = false;
+    var checkboxToggler = null;
     var lastX = 0;
     var lastY = 0;
     var x = 0;
@@ -63,51 +64,36 @@
     };
 
     /**
-     * Deal with key press and release in one function. If <released> is falsy,
+     * Deal wit/h key press and release in one function. If <released> is falsy,
      * the keydown handler will be called, otherwise,
      */
     var handleKeyAction = function( e, released ) {
+      if (!e) {
+        throw new CATMAID.ValueError("No event provided");
+      }
       released = !!released;
       var projectKeyPress;
       var key;
-      var shift;
-      var alt;
-      var ctrl;
-      var meta;
       var keyAction;
 
-      /* The code here used to modify 'e' and pass it
-         on, but Firefox no longer allows this.  So, create
-         a fake event object instead, and pass that down. */
+      // The event object can't be modified directly. To be able to do this, a
+      // new event object is created. The data we need is copied over.
       var fakeEvent = {};
+      fakeEvent.key = e.key;
+      fakeEvent.shiftKey = e.shiftKey;
+      fakeEvent.altKey = e.altKey;
+      fakeEvent.ctrlKey = e.ctrlKey;
+      fakeEvent.metaKey = e.metaKey;
+      fakeEvent.repeat = e.repeat;
+      fakeEvent.target = CATMAID.UI.getTargetElement(e);
 
-      if ( e )
-      {
-        fakeEvent.key = e.key;
-        fakeEvent.shiftKey = e.shiftKey;
-        fakeEvent.altKey = e.altKey;
-        fakeEvent.ctrlKey = e.ctrlKey;
-        fakeEvent.metaKey = e.metaKey;
-        fakeEvent.repeat = e.repeat;
-        shift = e.shiftKey;
-        alt = e.altKey;
-        ctrl = e.ctrlKey;
-        meta = e.metaKey;
-      }
-      else if ( event && event.key)
-      {
-        fakeEvent.key = event.key;
-        fakeEvent.shiftKey = event.shiftKey;
-        fakeEvent.altKey = event.altKey;
-        fakeEvent.ctrlKey = event.ctrlKey;
-        fakeEvent.metaKey = event.metaKey;
-        fakeEvent.repeat = event.repeat;
-        shift = event.shiftKey;
-        alt = event.altKey;
-        ctrl = event.ctrlKey;
-        meta = event.metaKey;
-      }
-      fakeEvent.target = CATMAID.UI.getTargetElement(e || event);
+      var shift = e.shiftKey;
+      var alt = e.altKey;
+      var ctrl = e.ctrlKey;
+      var meta = e.metaKey;
+
+      var propagate = true;
+
       var n = fakeEvent.target.nodeName.toLowerCase();
       var fromATextField = fakeEvent.target.getAttribute('contenteditable');
       if (n === "input") {
@@ -118,41 +104,42 @@
       }
       if (meta) {
         // Don't intercept command-key events on Mac.
-        return true;
+        propagate = true;
       }
       if (!(fromATextField || n == "textarea" || n == "area"))
       {
-        /* Note that there are two different
-           conventions for return values here: the
-           handleKeyPress() methods return true if the
-           event has been dealt with (i.e. it should
-           not be propagated) but the onkeydown
-           function should only return true if the
-           event should carry on for default
-           processing. */
-
         // Let UI actions in closure only deal with key-down events.
         if (!released && handleKeyPress(fakeEvent)) {
-          return false;
+          propagate = false;
         }
 
         // Try to handle key in this order: active widget, tool, project
         var activeWidget = CATMAID.front();
         if (activeWidget && handledBy(activeWidget, fakeEvent, released)) {
-          return false;
+          propagate = false;
         }
         if (project) {
           var tool = project.getTool();
           if (tool && handledBy(tool, fakeEvent, released)) {
-            return false;
+            propagate = false;
           }
           if (handledBy(project, fakeEvent, released)) {
-            return false;
+            propagate = false;
           }
         }
       }
 
-      return true;
+      // If the event was handled, prevent the browser's default action.
+      if (!propagate) {
+        e.preventDefault();
+      }
+
+      // Note that there are two different conventions for return values here:
+      // the handleKeyPress() methods return true if the event has been dealt
+      // with (i.e. it should not be propagated) but the onkeydown function
+      // should only return true if the event should carry on for default
+      // processing.
+      return propagate;
     };
 
     var onkeydown = function( e ) {
@@ -512,6 +499,22 @@
       focusCatcher.focus();
     };
 
+    /**
+     * Toggle the display of an overlay over all of the front end that allows
+     * users to draw a rectangle with their mouse under which all checkboxes will
+     * be toggled.
+     */
+    this.toggleRectCheckboxSelect = function(checkOnly) {
+      if (checkboxToggler && checkboxToggler.active) {
+        checkboxToggler.destroy();
+        checkboxToggler = null;
+      } else {
+        checkboxToggler = new CATMAID.RectCheckboxSelector({
+          checkOnly: checkOnly
+        });
+        checkboxToggler.init();
+      }
+    };
 
     /**
      * Enables or disables the browser context menu.
@@ -540,6 +543,7 @@
     document.onkeydown = onkeydown;
     document.onkeyup = onkeyup;
   };
+
   /**
    * Map a key combination to a standard key value. This will for instance
    * map 'shift + a' to A. For a list of key values
@@ -577,6 +581,57 @@
       var capitalKeyValue = String.fromCharCode(keyCode);
       map.set('Shift + ' + keyValue, capitalKeyValue);
     }
+
+    // On Mac OS pressing Alt together with another key produces a different
+    // character than the key without modifiers. The key referenced in the key
+    // field of the event object reflects that. Make it so that these characters
+    // are replaced by the plain key as it is the default on Linux and Windows.
+    map.set('Alt + ¡', '1');
+    map.set('Alt + ™', '2');
+    map.set('Alt + £', '3');
+    map.set('Alt + ¢', '4');
+    map.set('Alt + ∞', '5');
+    map.set('Alt + §', '6');
+    map.set('Alt + ¶', '7');
+    map.set('Alt + •', '8');
+    map.set('Alt + ª', '9');
+    map.set('Alt + º', '0');
+    map.set('Alt + –', '-');
+    map.set('Alt + ≠', '=');
+    map.set('Alt + œ', 'q');
+    map.set('Alt + ∑', 'w');
+    map.set('Alt + ´', 'e');
+    map.set('Alt + ®', 'r');
+    map.set('Alt + †', 't');
+    map.set('Alt + ¥', 'y');
+    map.set('Alt + ¨', 'u');
+    map.set('Alt + ˆ', 'i');
+    map.set('Alt + ø', 'o');
+    map.set('Alt + π', 'p');
+    map.set('Alt + “', '[');
+    map.set('Alt + ‘', ']');
+    map.set('Alt + «', '\\');
+    map.set('Alt + å', 'a');
+    map.set('Alt + ß', 's');
+    map.set('Alt + ∂', 'd');
+    map.set('Alt + ƒ', 'f');
+    map.set('Alt + ©', 'g');
+    map.set('Alt + ˙', 'h');
+    map.set('Alt + ∆', 'j');
+    map.set('Alt + ˚', 'k');
+    map.set('Alt + ¬', 'l');
+    map.set('Alt + …', ';');
+    map.set('Alt + æ', '\'');
+    map.set('Alt + Ω', 'z');
+    map.set('Alt + ≈', 'x');
+    map.set('Alt + ç', 'c');
+    map.set('Alt + √', 'v');
+    map.set('Alt + ∫', 'b');
+    map.set('Alt + ˜', 'n');
+    map.set('Alt + µ', 'm');
+    map.set('Alt + ≤', ',');
+    map.set('Alt + ≥', '.');
+    map.set('Alt + ÷', '/');
 
     return map;
   };
@@ -617,10 +672,15 @@
 
   CATMAID.UI.normalizeKeyComponents = function(components) {
     var keyValue;
-    if (components.shiftKey) {
-      var keyCombo = CATMAID.UI.toKeyCombo(components);
+    if (components.shiftKey || components.altKey) {
+      var keyCombo = CATMAID.UI.toKeyCombo({
+        key: components.key,
+        shiftKey: components.shiftKey,
+        altKey: components.altKey
+      });
       keyValue = CATMAID.UI.keyValueMap.get(keyCombo);
     }
+
     return {
       key: keyValue ? keyValue : components.key,
       altKey: components.altKey,
@@ -634,10 +694,10 @@
    * Return a key combination string based on a set of components.
    */
   CATMAID.UI.toKeyCombo = function(components) {
-    return (components.altKey ? "Alt + " : "") +
-           (components.ctrlKey ? "Ctrl + " : "") +
-           (components.metaKey ? "Meta + " : "") +
-           (components.shiftKey ? "Shift + " : "") +
+    return (components.altKey && components.key !== "Alt" ? "Alt + " : "") +
+           (components.ctrlKey && components.key !== "Ctrl" ? "Ctrl + " : "") +
+           (components.metaKey && components.key !== "Meta" ? "Meta + " : "") +
+           (components.shiftKey && components.key !== "Shift" ? "Shift + " : "") +
            components.key;
   };
 

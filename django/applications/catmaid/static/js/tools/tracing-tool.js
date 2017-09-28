@@ -17,6 +17,29 @@
     var activeStackViewer = null;
     // Map stacks to its mouse handlers
     var bindings = new Map();
+    // Update caches every 60min
+    this.autoCacheUpdateIntervalLength = 60*60*1000;
+    this.autoCacheUpdateInterval = null;
+    this.refreshAutoCacheUpdate();
+
+    /**
+     * Return the stack viewer referenced by the active node, or otherwise (if
+     * unavailable) use the tracing tool's active stack viewer.
+     */
+    var getActiveNodeStackViewer = function() {
+      var stackViewerId = SkeletonAnnotations.atn.stack_viewer_id;
+      return stackViewerId === undefined ?
+          activeStackViewer : project.getStackViewer(stackViewerId);
+    };
+
+    var getActiveNodeTracingLayer = function() {
+      var stackViewer = getActiveNodeStackViewer();
+      var tracingLayer = stackViewer.getLayer(getTracingLayerName(stackViewer));
+      if (!tracingLayer) {
+        throw new CATMAID.ValueError("Can't find tracing layer for active node");
+      }
+      return tracingLayer;
+    };
 
     /**
      * Set postAction option of a command to update of the active tracing layer,
@@ -193,18 +216,18 @@
       }
 
       // Insert a text div for the neuron name in the canvas window title bar
-      var neuronNameDisplayID = "neuronName" + stackViewer.getId();
-      var neuronNameDisplay = document.getElementById(neuronNameDisplayID);
-      if (!neuronNameDisplay) {
+      var activeElementId = "active-element" + stackViewer.getId();
+      var activeElement = document.getElementById(activeElementId);
+      if (!activeElement) {
         var stackFrame = stackViewer.getWindow().getFrame();
-        neuronnameDisplay = document.createElement("p");
-        neuronnameDisplay.id = neuronNameDisplayID;
-        neuronnameDisplay.className = "neuronname";
+        activeElement = document.createElement("p");
+        activeElement.id = activeElementId;
+        activeElement.classList.add("active-element");
         var spanName = document.createElement("span");
         spanName.appendChild(document.createTextNode(""));
-        neuronnameDisplay.appendChild(spanName);
-        stackFrame.appendChild(neuronnameDisplay);
-        setNeuronNameInTopbars(SkeletonAnnotations.getActiveSkeletonId());
+        activeElement.appendChild(spanName);
+        stackFrame.appendChild(activeElement);
+        setActiveElemenTopBarText(SkeletonAnnotations.getActiveSkeletonId());
       }
 
       return layer;
@@ -216,7 +239,7 @@
     function closeStackViewer(stackViewer) {
       // Unregister the neuron name label from the neuron name service and
       // remove it.
-      var label = $('#neuronName' + stackViewer.getId());
+      var label = $('#active-element' + stackViewer.getId());
       var labelData = label.data();
       if (labelData) CATMAID.NeuronNameService.getInstance().unregister(labelData);
       label.remove();
@@ -337,7 +360,16 @@
       // Forget the current stack viewer
       self.activeStackViewer = null;
 
-      return;
+      // Neurons from the closed project shouldn't need a front-end name
+      // anymore.
+      CATMAID.NeuronNameService.getInstance().clear();
+
+      // Forget the active node
+      SkeletonAnnotations.atn.set(null);
+
+      if (this.autoCacheUpdateTimeout) {
+        window.clearInterval(this.autoCacheUpdateInterval);
+      }
     };
 
     /**
@@ -346,7 +378,7 @@
      */
     function clearTopbars(text) {
       project.getStackViewers().forEach(function(stackViewer) {
-        var label = $('#neuronName' + stackViewer.getId());
+        var label = $('#active-element' + stackViewer.getId());
         label.text(text || '');
         var labelData = label.data();
         if (labelData) CATMAID.NeuronNameService.getInstance().unregister(labelData);
@@ -357,8 +389,8 @@
      * Set the text in the small bar next to the close button of each stack
      * viewer to the name of the skeleton as it is given by the nameservice.
      */
-    function setNeuronNameInTopbars(skeletonID, prefix) {
-      if (!skeletonID) {
+    function setActiveElemenTopBarText(skeletonId, prefix) {
+      if (!skeletonId) {
         clearTopbars();
         return;
       }
@@ -367,21 +399,25 @@
       prefix = prefix || '';
 
       project.getStackViewers().forEach(function(stackViewer) {
-        var label = $('#neuronName' + stackViewer.getId());
+        var label = $('#active-element' + stackViewer.getId());
         if (0 === label.length) return;
 
-        CATMAID.NeuronNameService.getInstance().unregister(label.data());
+        var labelData = label.data();
+        if (labelData) {
+          CATMAID.NeuronNameService.getInstance().unregister(labelData);
+        }
 
-        label.data('skeleton_id', skeletonID);
+        // If a skeleton is selected, register with neuron name service.
+        label.data('skeleton_id', skeletonId);
         label.data('updateNeuronNames', function () {
           label.text(prefix + CATMAID.NeuronNameService.getInstance().getName(this.skeleton_id));
         });
 
         var models = {};
-        models[skeletonID] = {};
+        models[skeletonId] = {};
         CATMAID.NeuronNameService.getInstance().registerAll(label.data(), models)
           .then(function() {
-            label.text(prefix + CATMAID.NeuronNameService.getInstance().getName(skeletonID));
+            label.text(prefix + CATMAID.NeuronNameService.getInstance().getName(skeletonId));
           });
       });
     }
@@ -393,7 +429,7 @@
     function handleActiveNodeChange(node, skeletonChanged) {
       if (node && node.id) {
         if (skeletonChanged && SkeletonAnnotations.TYPE_NODE === node.type) {
-          setNeuronNameInTopbars(node.skeleton_id);
+          setActiveElemenTopBarText(node.skeleton_id);
         } else if (SkeletonAnnotations.TYPE_CONNECTORNODE === node.type) {
           if (CATMAID.Connectors.SUBTYPE_SYNAPTIC_CONNECTOR === node.subtype) {
             // Retrieve presynaptic skeleton
@@ -403,8 +439,8 @@
             .then(function(json) {
               var presynaptic_to = json[0] ? json[0][1].presynaptic_to : false;
               if (presynaptic_to) {
-                setNeuronNameInTopbars(presynaptic_to, 'Connector ' + node.id +
-                    ', presynaptic partner: ');
+                setActiveElemenTopBarText(presynaptic_to, 'Connector ' +
+                    node.id + ', presynaptic partner: ');
               } else {
                 clearTopbars('Connector ' + node.id + ' (no presynatpic partner)');
               }
@@ -421,7 +457,8 @@
       }
     }
 
-    this.prototype.changeSlice = function(val) {
+    this.prototype.changeSlice = function(val, step) {
+      val = activeStackViewer.toValidZ(val, step < 0 ? -1 : 1);
       activeStackViewer.moveToPixel( val, activeStackViewer.y, activeStackViewer.x, activeStackViewer.s )
         .catch(CATMAID.warn);
     };
@@ -574,7 +611,8 @@
           var skid = SkeletonAnnotations.getActiveSkeletonId();
           if (Number.isInteger(skid)) CATMAID.WebGLApplication.prototype.staticReloadSkeletons([skid]);
         } else {
-          activeTracingLayer.tracingOverlay.moveToAndSelectNode(SkeletonAnnotations.getActiveNodeId());
+          activeTracingLayer.tracingOverlay.moveToAndSelectNode(SkeletonAnnotations.getActiveNodeId())
+            .catch(CATMAID.handleError);
         }
         return true;
       }
@@ -649,8 +687,9 @@
           // completed.
           update.then(function() {
             updateInProgress = false;
-          }).catch(function() {
+          }).catch(function(error) {
             updateInProgress = false;
+            CATMAID.handleError(error);
           });
 
           return true;
@@ -783,7 +822,8 @@
       run: function (e) {
         if (!CATMAID.mayEdit())
           return false;
-        activeTracingLayer.tracingOverlay.splitSkeleton(SkeletonAnnotations.getActiveNodeId());
+        var tracingLayer = getActiveNodeTracingLayer();
+        tracingLayer.tracingOverlay.splitSkeleton(SkeletonAnnotations.getActiveNodeId());
         return true;
       }
     }));
@@ -796,7 +836,8 @@
       run: function (e) {
         if (!CATMAID.mayEdit())
           return false;
-        activeTracingLayer.tracingOverlay.rerootSkeleton(SkeletonAnnotations.getActiveNodeId());
+        var tracingLayer = getActiveNodeTracingLayer();
+        tracingLayer.tracingOverlay.rerootSkeleton(SkeletonAnnotations.getActiveNodeId());
         return true;
       }
     }));
@@ -820,6 +861,25 @@
 
         document.getElementById( "trace_button_togglelabels" ).className =
             showLabels ? "button_active" : "button";
+
+        return true;
+      }
+    }));
+
+    this.addAction(new CATMAID.Action({
+      helpText: "Refresh cached data like neuron names and annotations",
+      buttonName: "refresh",
+      buttonID: "trace_button_refresh",
+      keyShortcuts: { "F6": ["F6"] },
+      run: function(e) {
+        if (!CATMAID.mayView()) {
+          return false;
+        }
+        self.refreshCaches()
+          .then(function() {
+            CATMAID.msg("Success", "Caches updated");
+          })
+          .catch(CATMAID.handleError);
 
         return true;
       }
@@ -923,9 +983,11 @@
           if (selectedNode) {
             // If this layer has a node close by, activate it
             if (activeTracingLayer.stackViewer.z === selectedNode.node.z) {
-              SkeletonAnnotations.staticSelectNode(selectedNode.id);
+              SkeletonAnnotations.staticSelectNode(selectedNode.id, true)
+                .catch(CATMAID.handleError);
             } else {
-              SkeletonAnnotations.staticMoveToAndSelectNode(selectedNode.id);
+              SkeletonAnnotations.staticMoveToAndSelectNode(selectedNode.id)
+                .catch(CATMAID.handleError);
             }
           }
           return true;
@@ -1044,7 +1106,7 @@
 
     this.addAction(new CATMAID.Action({
       helpText: "Move to previous node in segment for review. At an end node, moves one section beyond for you to check that it really ends.",
-      keyShortcuts: { 'Q': [ 'q' ] },
+      keyShortcuts: { 'Q': [ 'q', 'Shift + q' ] },
       run: function (e) {
         if (!CATMAID.mayEdit())
           return false;
@@ -1109,8 +1171,13 @@
         if (!CATMAID.mayEdit()) {
           return false;
         }
-        CATMAID.annotate_neurons_of_skeletons(
-            [SkeletonAnnotations.getActiveSkeletonId()]);
+        var activeSkeletonId = SkeletonAnnotations.getActiveSkeletonId();
+        if (activeSkeletonId) {
+          CATMAID.annotate_neurons_of_skeletons(
+              [activeSkeletonId]);
+        } else {
+          CATMAID.warn('No neuron selected to annotate');
+        }
         return true;
       }
     }));
@@ -1154,10 +1221,14 @@
       keyShortcuts: { '/': [ '/', 'Shift + /' ] },
       run: function (e) {
         if (e.shiftKey) {
-          var nextSkid = CATMAID.NeuronSearch.prototype.getFirstInstance()
-              .getNextSkeletonIdAfter(SkeletonAnnotations.getActiveSkeletonId());
-          if (nextSkid) {
-            CATMAID.TracingTool.goToNearestInNeuronOrSkeleton('skeleton', nextSkid);
+          var neuronSearch = CATMAID.NeuronSearch.prototype.getFirstInstance();
+          if (neuronSearch) {
+            var nextSkid = neuronSearch.getNextSkeletonIdAfter(SkeletonAnnotations.getActiveSkeletonId());
+            if (nextSkid) {
+              CATMAID.TracingTool.goToNearestInNeuronOrSkeleton('skeleton', nextSkid);
+            }
+          } else {
+            CATMAID.msg('No search widget open', 'Please open a search widget first');
           }
         } else {
           WindowMaker.create('neuron-search');
@@ -1237,6 +1308,7 @@
         var removePeekingSkeleton = function () {
           viewersWithoutSkel.forEach(function (viewer) {
             viewer.removeSkeletons([skid]);
+            viewer.render();
           });
           self.peekingSkeleton = false;
         };
@@ -1245,7 +1317,11 @@
           // In case the key is released before the skeleton has loaded,
           // check after loading whether it is still being peeked.
           viewer.addSkeletons(skeletonModels, function () {
-            if (self.peekingSkeleton !== skid) removePeekingSkeleton();
+            if (self.peekingSkeleton !== skid) {
+              removePeekingSkeleton();
+            } else {
+              viewer.render();
+            }
           });
         });
 
@@ -1275,8 +1351,12 @@
       var result = false;
       var keyAction = CATMAID.UI.getMappedKeyAction(keyToAction, e);
       if (keyAction) {
-        activeTracingLayer.tracingOverlay.ensureFocused();
-        result = keyAction.run(e);
+        if (activeTracingLayer) {
+          activeTracingLayer.tracingOverlay.ensureFocused();
+          result = keyAction.run(e);
+        } else {
+          CATMAID.warn("Tracing layer not yet loaded, ignoring key short cut");
+        }
       }
       if (!result) {
         result = this.prototype.handleKeyPress(e);
@@ -1336,6 +1416,32 @@
     SkeletonAnnotations.on(SkeletonAnnotations.EVENT_ACTIVE_NODE_CHANGED,
         handleActiveNodeChange, this);
   }
+
+  /**
+   * Refresh various caches, like the annotation cache.
+   */
+  TracingTool.prototype.refreshCaches = function() {
+    return Promise.all([
+      CATMAID.annotations.update(),
+      CATMAID.NeuronNameService.getInstance().refresh(),
+      SkeletonAnnotations.VisibilityGroups.refresh()
+    ]);
+  };
+
+  /**
+   * Clear a potentially running auto cache update timeout and create a new one
+   * if an update interval is set.
+   */
+  TracingTool.prototype.refreshAutoCacheUpdate = function() {
+    if (this.autoCacheUpdateTimeout) {
+      window.clearInterval(this.autoCacheUpdateInterval);
+    }
+
+    if (this.autoCacheUpdateIntervalLength) {
+      this.autoCacheUpdateInterval= window.setInterval(
+          this.refreshCaches.bind(this), this.autoCacheUpdateIntervalLength);
+    }
+  };
 
   /**
    * Move to and select a node in the specified neuron or skeleton nearest
@@ -1538,6 +1644,16 @@
       buttonName: 'synapse_plot',
       run: function (e) {
         WindowMaker.create('synapse-plot');
+        return true;
+      }
+    }),
+
+    new CATMAID.Action({
+      helpText: "Synapse Fractions: Show fraction of inputs or outputs in percent",
+      buttonID: "data_button_synapse_fractions",
+      buttonName: 'synapse_fractions',
+      run: function (e) {
+        WindowMaker.create('synapse-fractions');
         return true;
       }
     }),

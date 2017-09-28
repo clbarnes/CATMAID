@@ -10,16 +10,17 @@
    * general header.
    */
   var DataView = function(options) {
-    options = CATMAID.tools.updateFromDefaults(options, DataView.defaultOptions);
+    options.config = CATMAID.tools.updateFromDefaults(options.config,
+        DataView.defaultOptions);
 
     this.id = options.id;
     this.type = options.code_type;
 
     this.container = document.createElement('div');
 
-    this.header = options.header;
-    this.message = options.message;
-    this.classList = options.classList;
+    this.header = options.config.header;
+    this.message = options.config.message;
+    this.classList = options.config.classList;
   };
 
   /**
@@ -99,9 +100,11 @@
     this.title = "Project list " + this.widgetID;
     this.dataview = new ProjectListDataView({
        id: null,
-       type: 'legacy_project_list_data_view',
-       header: false,
-       message: false,
+       type: 'simple_project_list_data_view',
+       config: {
+         header: false,
+         message: false
+       }
     });
   };
 
@@ -137,6 +140,8 @@
 
   // Register widget with CATMAID
   CATMAID.registerWidget({
+    name: "Project list data view",
+    description: "List available projects and stacks",
     key: "project-list",
     creator: DataViewWidget
   });
@@ -164,12 +169,17 @@
 
 
   var ProjectListDataView = function(options) {
-    options = CATMAID.tools.updateFromDefaults(options, ProjectListDataView.defaultOptions);
+    options.config = CATMAID.tools.updateFromDefaults(options.config,
+        ProjectListDataView.defaultOptions);
 
     // Call super constructor
     DataView.call(this, options);
 
-    this.filter = options.filter;
+    this.filter = options.config.filter;
+    this.projectFilterTerm = options.config.projectFilterTerm;
+    this.stackFilterTerm = options.config.stackFilterTerm;
+    this.with_stacks = options.config.with_stacks;
+    this.with_stackgroups = options.config.with_stackgroups;
     this.cacheLoadingTimeout = null;
   };
 
@@ -177,7 +187,11 @@
   ProjectListDataView.prototype.constructor = DataView;
 
   ProjectListDataView.defaultOptions = {
-    filter: false
+    filter: true,
+    projectFilterTerm: "",
+    stackFilterTerm: "",
+    with_stacks: true,
+    with_stackgroups: true
   };
 
   ProjectListDataView.prototype.createContent = function(content) {
@@ -201,10 +215,26 @@
     }
     hp.appendChild(searchForm);
 
-    var searchInput = document.createElement('input');
-    searchInput.setAttribute('type', 'text');
-    searchInput.onkeyup = this.refreshDelayed.bind(this);
-    searchForm.appendChild(searchInput);
+    var projectSearchInput = document.createElement('input');
+    projectSearchInput.setAttribute('type', 'text');
+    projectSearchInput.setAttribute('data-role', 'project-filter');
+    projectSearchInput.setAttribute('placeholder', 'Project filter');
+    if (this.projectFilterTerm.length > 0) {
+      projectSearchInput.value = this.projectFilterTerm;
+    }
+    projectSearchInput.onkeyup = this.refreshDelayed.bind(this);
+    searchForm.appendChild(projectSearchInput);
+
+    var stackSearchInput = document.createElement('input');
+    stackSearchInput.setAttribute('type', 'text');
+    stackSearchInput.setAttribute('data-role', 'stack-filter');
+    stackSearchInput.setAttribute('placeholder', 'Stack filter');
+    stackSearchInput.style.marginLeft = '0.5em';
+    if (this.stackFilterTerm.length > 0) {
+      stackSearchInput.value = this.stackFilterTerm;
+    }
+    stackSearchInput.onkeyup = this.refreshDelayed.bind(this);
+    searchForm.appendChild(stackSearchInput);
 
     var searchIndicator = document.createElement('span');
     searchIndicator.setAttribute('data-role', 'filter-indicator');
@@ -229,6 +259,22 @@
     return Promise.resolve();
   };
 
+  function createProjectMemberEntry(member, target, handler) {
+    var dd = document.createElement("dd");
+    var a = document.createElement("a");
+    var ddc = document.createElement("dd");
+    a.href = "#";
+    a.onclick = handler;
+    a.appendChild(document.createTextNode(member.title));
+    dd.appendChild(a);
+    target.appendChild(dd);
+    if (member.comment) {
+      ddc = document.createElement("dd");
+      ddc.innerHTML = member.comment;
+      target.appendChild(ddc);
+    }
+  }
+
   /**
    * Update the displayed project list based on the cache entries. This can
    * involve a filter in the text box "project_filter_text".
@@ -236,16 +282,24 @@
   ProjectListDataView.prototype.refresh = function(content) {
     DataView.prototype.refresh.call(this, content);
 
+    this.projectFilterTerm = $('input[data-role=project-filter]', this.container).val();
+    var projectRegEx = this.projectFilterTerm.length > 0 ? new RegExp(this.projectFilterTerm, "i") : null;
+
+    this.stackFilterTerm = $('input[data-role=stack-filter]', this.container).val();
+    var stackRegEx = this.stackFilterTerm.length > 0 ? new RegExp(this.stackFilterTerm, "i") : null;
+
     var matchingProjects = 0,
-        searchString = $('[data-role=filter] input', this.container).val(),
-        display,
-        re = new RegExp(searchString, "i"),
         title,
         toappend,
         dt, dd, a, ddc,
         p,
         catalogueElement, catalogueElementLink,
-        pp = this.container.querySelector("[data-role=project-display]");
+        pp = this.container.querySelector("[data-role=project-display]"),
+        container = pp.parentElement;
+
+    // Detach container from parent to have quicker updates
+    container.removeChild(pp);
+
     // remove all the projects
     while (pp.firstChild) pp.removeChild(pp.firstChild);
     $('[data-role=filter-message]', this.container).text('');
@@ -253,52 +307,54 @@
     var projects = CATMAID.client.projects;
     for (var projectId in projects) {
       p = projects[projectId];
-      display = false;
       toappend = [];
 
-      dt = document.createElement("dt");
-
       title = p.title;
-      if (re.test(title)) {
-        display = true;
+      if (projectRegEx && !projectRegEx.test(title)) {
+        continue;
       }
-      dt.appendChild(document.createTextNode(p.title));
 
-      this.container.querySelector("[data-role=project-header]").style.display = "block";
-      this.container.querySelector("[data-role=filter]").style.display = "block";
-      toappend.push(dt);
+      dt = document.createElement("dt");
+      dt.appendChild(document.createTextNode(p.title));
+      pp.appendChild(dt);
+
+      // add a link for each stack group
+      var matchingStackGroups = 0;
+      if (this.with_stackgroups) {
+        for (var i=0; i<p.stackgroups.length; ++i) {
+          var sg = p.stackgroups[i];
+          if (stackRegEx && !stackRegEx.test(sg.title)) {
+            continue;
+          }
+          createProjectMemberEntry(sg, pp,
+              CATMAID.openStackGroup.bind(window, p.id, sg.id, false, undefined));
+          ++matchingStackGroups;
+        }
+      }
 
       // add a link for every action (e.g. a stack link)
-      for (var i=0; i<p.stacks.length; ++i) {
-        var s = p.stacks[i];
-        dd = document.createElement("dd");
-        a = document.createElement("a");
-        ddc = document.createElement("dd");
-        a.href = "#";
-        a.onclick = CATMAID.openProjectStack.bind(window, p.id, s.id, false);
-        if (re.test(s.title)) {
-          display = true;
-        }
-        a.appendChild(document.createTextNode(s.title));
-        dd.appendChild(a);
-        toappend.push(dd);
-        if (s.comment) {
-          ddc = document.createElement("dd");
-          ddc.innerHTML = s.comment;
-          toappend.push(ddc);
+      var matchingStacks = 0;
+      if (this.with_stacks) {
+        for (var i=0; i<p.stacks.length; ++i) {
+          var s = p.stacks[i];
+          if (stackRegEx && !stackRegEx.test(s.title)) {
+            continue;
+          }
+          createProjectMemberEntry(s, pp,
+              CATMAID.openProjectStack.bind(window, p.id, s.id, false, undefined));
+          ++matchingStacks;
         }
       }
-      if (display) {
-        ++ matchingProjects;
-        for (var i=0; i<toappend.length; ++i) {
-          pp.appendChild(toappend[i]);
-        }
-      }
+
+      ++matchingProjects;
     }
+
+    container.appendChild(pp);
+
     if (projects.length === 0) {
       $('[data-role=filter-message]', this.container).text('Could not find any CATMAID projects');
     } else if (matchingProjects === 0) {
-      $('[data-role=filter-message]', this.container).text('No projects matched "' + searchString + '"');
+      $('[data-role=filter-message]', this.container).text('No projects matched "' + this.projectFilterTerm + '"');
     }
   };
 
@@ -327,12 +383,16 @@
       }, 500);
   };
 
+  // Export data view
+  CATMAID.ProjectListDataView = ProjectListDataView;
+
+
   /**
    * A map of all available data views from their type.
    */
   DataView.dataviewTypes = {
     'empty': DataView,
-    'legacy_project_list_data_view': ProjectListDataView,
+    'simple_project_list_data_view': ProjectListDataView,
     'project_list_data_view': BackendDataView,
     'project_table_data_view': BackendDataView,
     'dynamic_projects_list_data_view': BackendDataView,

@@ -37,6 +37,10 @@
     // Listen to change events of the active node and skeletons
     SkeletonAnnotations.on(SkeletonAnnotations.EVENT_ACTIVE_NODE_CHANGED,
         this.selectActiveNode, this);
+
+    // Listen to annotation change events to update self when needed
+    CATMAID.Annotations.on(CATMAID.Annotations.EVENT_ANNOTATIONS_CHANGED,
+        this.handleAnnotationUpdate, this);
   };
 
   SelectionTable._lastFocused = null; // Static reference to last focused instance
@@ -187,7 +191,7 @@
               '</tr>' +
               '<tr>' +
                 '<th></th>' +
-                '<th><span class="ui-icon ui-icon-close" id="selection-table-remove-all' + this.widgetID + '" title="Remove all"></th>' +
+                '<th><i class="fa fa-close" id="selection-table-remove-all' + this.widgetID + '" title="Remove all"></i></th>' +
                 '<th class="expanding"><input type="button" value="Filter" class="filter" />' +
                   '<input class="filter" type="text" title="Use / for regex" placeholder="name filter" id="selection-table-filter' + this.widgetID + '" />' +
                   '<input class="filter" type="text" title="Use / for regex" placeholder="annotation filter" id="selection-table-ann-filter' + this.widgetID + '" /></th>' +
@@ -328,7 +332,6 @@
         // Add auto completetion to annotation filter
         CATMAID.annotations.add_autocomplete_to_input(
             $("#selection-table-ann-filter" + this.widgetID));
-        CATMAID.skeletonListSources.updateGUI();
         this.init();
         win.focus();
       },
@@ -378,6 +381,8 @@
     if (SelectionTable._lastFocused === this) SelectionTable._lastFocused = null;
     SkeletonAnnotations.off(SkeletonAnnotations.EVENT_ACTIVE_NODE_CHANGED,
         this.selectActiveNode, this);
+    CATMAID.Annotations.off(CATMAID.Annotations.EVENT_ANNOTATIONS_CHANGED,
+        this.handleAnnotationUpdate, this);
   };
 
   SelectionTable.prototype.updateModels = function(models, source_chain) {
@@ -490,6 +495,15 @@
   SelectionTable.prototype.selectActiveNode = function(activeNode)
   {
     this.highlight(activeNode ? activeNode.skeleton_id : null);
+  };
+
+  /**
+   * Update internal annotation based controls.
+   */
+  SelectionTable.prototype.handleAnnotationUpdate = function(targets, annotations) {
+    // Update auto completion for input fields
+    $("#selection-table-ann-filter" + this.widgetID).autocomplete(
+        "option", {source: CATMAID.annotations.getAllNames()});
   };
 
   /**
@@ -1182,8 +1196,9 @@
         },
         {
           "orderable": false,
+          "className": "dt-center cm-center",
           "render": function(data, type, row, meta) {
-            return '<span class="ui-icon ui-icon-close action-remove" alt="Remove" title="Remove"></span>';
+            return '<i class="fa fa-remove fa-fw clickable action-remove" alt="Remove" title="Remove"></i>';
           }
         },
         {
@@ -1241,6 +1256,7 @@
         },
         {
           "type": "hslcolor",
+          "className": "dt-center cm-center",
           "render": {
             "_": function(data, type, row, meta) {
               return row.skeleton.color.getHSL();
@@ -1257,16 +1273,16 @@
         {
           "orderable": false,
           "render": function(data, type, row, meta) {
-            return '<span class="ui-icon ui-icon-tag action-annotate" ' +
-              'alt="Annotate" title="Annotate skeleton"></span>' +
-              '<span class="ui-icon ui-icon-info action-info" alt="Info" ' +
-              'title="Open skeleton information"></span>' +
-              '<span class="ui-icon ui-icon-folder-collapsed action-navigator" ' +
-              'alt="Navigator" title="Open neuron navigator for skeleton"></span>' +
-              '<span class="ui-icon ui-icon-triangle-1-n action-moveup" ' +
-              'alt="Move up" title="Move skeleton up in list"></span>' +
-              '<span class="ui-icon ui-icon-triangle-1-s action-movedown" ' +
-              'alt="Move down" title="Move skeleton down in list"></span>';
+            return '<i class="fa fa-tag fa-fw clickable action-annotate" ' +
+              'alt="Annotate" title="Annotate skeleton"></i>' +
+              '<i class="fa fa-info-circle fa-fw clickable action-info" alt="Info" ' +
+              'title="Open skeleton information"></i>' +
+              '<i class="fa fa-folder fa-fw clickable action-navigator" ' +
+              'alt="Navigator" title="Open neuron navigator for skeleton"></i>' +
+              '<i class="fa fa-caret-up fa-fw clickable action-moveup" ' +
+              'alt="Move up" title="Move skeleton up in list"></i>' +
+              '<i class="fa fa-caret-down fa-fw clickable action-movedown" ' +
+              'alt="Move down" title="Move skeleton down in list"></i>';
           }
         }
       ],
@@ -1597,18 +1613,7 @@
    * Open a list of skeletons including their colors from a file.
    */
   SelectionTable.prototype.loadFromFiles = function(files) {
-      if (0 === files.length) {
-        CATMAID.error("Choose at least one file!");
-        return;
-      }
-      if (files.length > 1) {
-        CATMAID.error("Choose only one file!");
-        return;
-      }
-
-      var name = files[0].name;
-      if (name.lastIndexOf('.json') !== name.length - 5) {
-        CATMAID.error("File extension must be '.json'");
+      if (!CATMAID.isValidJSONFile(files)) {
         return;
       }
 
@@ -1682,6 +1687,8 @@
 
   // Register widget with CATMAID
   CATMAID.registerWidget({
+    name: "Selection Table",
+    description: "Manage lists of neurons",
     key: 'selection-table',
     creator: SelectionTable
   });

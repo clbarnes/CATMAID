@@ -250,7 +250,7 @@
 
   TreenodeTable.prototype.getSkeletonColor = function(skeleton_id) {
     var model = this.models[skeleton_id];
-    return model ? model.color.clone() : new THREE.Color().setRGB(1, 1, 0);
+    return model ? model.color.clone() : new THREE.Color(1, 1, 0);
   };
 
   TreenodeTable.prototype.getSelectedSkeletonModels = function() {
@@ -521,8 +521,9 @@
       var z = parseFloat(aData[6]);
       SkeletonAnnotations.staticMoveTo(z, y, x)
           .then(function () {
-            SkeletonAnnotations.staticSelectNode(id);
-          });
+            return SkeletonAnnotations.staticSelectNode(id);
+          })
+          .catch(CATMAID.handleError);
     });
   };
 
@@ -533,6 +534,8 @@
 
   // Register widget with CATMAID
   CATMAID.registerWidget({
+    name: "Treenode table",
+    description: "List all treenodes of a skeleton",
     key: "treenode-table",
     creator: TreenodeTable
   });

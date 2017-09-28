@@ -2,7 +2,6 @@
 /* vim: set softtabstop=2 shiftwidth=2 tabstop=2 expandtab: */
 /* global
   project,
-  requestQueue,
   WindowMaker
 */
 
@@ -16,6 +15,9 @@
     var statisticsData = null;
     // The time interval for the contribution table, default to days
     var timeUnit = "day";
+
+    // Whether import activity should be included in the displayed statistics.
+    this.includeImports = false;
 
     var update_stats_fields = function(data) {
       $("#skeletons_created").text(data.skeletons_created);
@@ -192,43 +194,45 @@
             }
 
             // Query all neurons reviewed by the given user in the given timeframe
-            requestQueue.register(django_url + project.id + '/skeletons/',
-                'GET', params, CATMAID.jsonResponseHandler(function(skeleton_ids) {
-                  // Open a new selection table with the returned set of
-                  // skeleton IDs, if any.
-                  if (0 === skeleton_ids.length) {
-                    CATMAID.info('No skeletons found for your selection');
-                    return;
-                  }
-                  var models = skeleton_ids.reduce(function(o, skid) {
-                    o[skid] = new CATMAID.SkeletonModel(skid, "",
-                        new THREE.Color().setRGB(1, 1, 0));
-                    return o;
-                  }, {});
-                  var widget = WindowMaker.create('selection-table').widget;
-                  if (widget) {
-                    widget.append(models);
-                  } else {
-                    CATMAID.warn('Couldn\'t open selection table');
-                  }
-                }));
+            CATMAID.fetch(project.id + '/skeletons/', 'GET', params)
+              .then(function(skeleton_ids) {
+                // Open a new selection table with the returned set of
+                // skeleton IDs, if any.
+                if (0 === skeleton_ids.length) {
+                  CATMAID.info('No skeletons found for your selection');
+                  return;
+                }
+                var models = skeleton_ids.reduce(function(o, skid) {
+                  o[skid] = new CATMAID.SkeletonModel(skid, "",
+                      new THREE.Color(1, 1, 0));
+                  return o;
+                }, {});
+                var widget = WindowMaker.create('selection-table').widget;
+                if (widget) {
+                  widget.append(models);
+                } else {
+                  CATMAID.warn('Couldn\'t open selection table');
+                }
+              })
+              .catch(CATMAID.handleError);
             break;
           case 'connectors':
             // Query all connectors created by the given user in the given
             // timeframe and open the connector selection table
-            requestQueue.register(django_url + project.id + '/connector/list/completed',
-                'GET', {
-                  completed_by: user_id,
-                  from: from,
-                  to: to,
-                }, CATMAID.jsonResponseHandler(function(connectors) {
-                  if (0 === connectors.length) {
-                    CATMAID.info('No connectors found for your selection');
-                    return;
-                  }
+            CATMAID.fetch(project.id + '/connector/list/completed', 'GET', {
+                completed_by: user_id,
+                from: from,
+                to: to,
+              })
+              .then(function(connectors) {
+                if (0 === connectors.length) {
+                  CATMAID.info('No connectors found for your selection');
+                  return;
+                }
 
-                  CATMAID.ConnectorSelection.show_connectors(connectors);
-                }));
+                CATMAID.ConnectorSelection.show_connectors(connectors);
+              })
+              .catch(CATMAID.handleError);
             break;
           default:
             return;
@@ -236,8 +240,27 @@
       });
     };
 
+    /**
+     * Update the pie chart with the passed in <chart_name> with the passed in
+     * <data>. The data maps user IDs to values.
+     */
     var update_piechart = function(data, chart_name) {
-      $(chart_name).empty();
+      var userIds = Object.keys(data);
+      var userNodeCounts = userIds.map(function(userId) {
+        var count = this[userId];
+        // Due to the way Raphael renders a single 100% user, no pie chart
+        // unless there is at least one other value > 0. Therefore, zero is not
+        // represented as zero for Raphael, but almost zero.
+        return count === 0 ? 0.00001 : count;
+      }, data);
+
+      if (userNodeCounts.length === 1) {
+        userIds.push("Anonymous");
+        userNodeCounts.push(0.00001);
+      }
+
+      $('#' + chart_name).empty();
+
       var x = 90, y = 100, radius = 80, height = 200;
       // Create basic pie chart without any labels
       var rpie = Raphael(chart_name, '100%', height);
@@ -246,8 +269,8 @@
       // and replacing the long tail of low values to a single entry that
       // is annotated with the boolean flag "others".
       // The parameter maxSlices should be accepted but it is ignored.
-      var pie = rpie.piechart(x, y, radius, data.values, {
-          colors: data.values.map(function(v, i) { return colorizer(i);}),
+      var pie = rpie.piechart(x, y, radius, userNodeCounts, {
+          colors: userNodeCounts.map(function(v, i) { return colorizer(i);}),
       });
 
       /* Manually draw labels, because the legend can easily grow to large and
@@ -266,7 +289,8 @@
       // The current maximum label lengths, can increase over time
       var max_label_width = 0;
       // Draw all labels, including a colored circle in front of it
-      data.values.forEach(function(e, i, values) {
+      userNodeCounts.forEach(function(e, i) {
+        var userId = userIds[e.order];
         var circ_r = 5;
         var text_indent = 2 * circ_r + 10;
         var l_x = legend_x + shift_x;
@@ -284,13 +308,16 @@
                 'stroke': color,
                 'fill': color,
             });
-        // Draw label
-        var text = rpie.text(l_x + 2 * circ_r + 10, l_y + circ_r,
-            e.others ? "Others" : data.users[e.order])
-                .attr({
-                    'text-anchor': 'start',
-                    'font': '12px Arial, sans-serif',
-                });
+        // Draw label, the rounding is needed to to a corner case with a single
+        // 100% users with other zero contribution users, for which we set the
+        // zero values to 0.00001 above.
+        var labelText = (e.others ? "Others" : CATMAID.User.safe_get(userId).login) +
+            " (" + Math.round(e.value) + ")";
+        var text = rpie.text(l_x + 2 * circ_r + 10, l_y + circ_r, labelText)
+          .attr({
+            'text-anchor': 'start',
+            'font': '12px Arial, sans-serif',
+          });
         // Find maximum text width
         var bb = text.getBBox();
         if (bb.width > max_label_width) {
@@ -429,87 +456,54 @@
     };
 
     this.refresh_project_statistics = function() {
-      refresh_nodecount();
       this.refresh_history();
+      this.refreshNodecount();
+    };
 
-      // d3.json(django_url + project.id + '/stats/history', update_linegraph);
+    this.refreshNodecount = function() {
+      return CATMAID.fetch(project.id + '/stats/nodecount', 'GET', {
+          with_imports: this.includeImports
+        })
+        .then(function(response) {
+          // The respose maps user IDs to number of nodes
+          update_piechart(response, "piechart_treenode_holder");
+        })
+        .catch(CATMAID.handleError);
     };
 
     this.refresh_history = function() {
       // disable the refresh button until finished
       $(".stats-history-setting").prop('disabled', true);
-      requestQueue.register(django_url + project.id + '/stats/user-history', "GET", {
-        "pid": project.id,
-        "start_date": $("#stats-history-start-date").val(),
-        "end_date": $("#stats-history-end-date").val(),
-      }, function (status, text, xml) {
-        $(".stats-history-setting").prop('disabled', false);
-        statisticsData = null;
-        if (status == 200) {
-          if (text && text != " ") {
-            var jso = JSON.parse(text);
-            if (jso.error) {
-              alert(jso.error);
-            } else {
-              statisticsData = jso;
-              update_user_history(jso, timeUnit);
-            }
-          }
-        }
-        return true;
-      });
+      CATMAID.fetch(project.id + '/stats/user-history', "GET", {
+          "pid": project.id,
+          "start_date": $("#stats-history-start-date").val(),
+          "end_date": $("#stats-history-end-date").val(),
+        })
+        .then(function(jso) {
+          $(".stats-history-setting").prop('disabled', false);
+          statisticsData = jso || null;
+          update_user_history(jso, timeUnit);
+        })
+        .catch(CATMAID.handleError);
+      return true;
     };
 
     var refresh_editors = function() {
-      requestQueue.register(django_url + project.id + '/stats/editor', "GET",{
-      }, function (status, text, xml) {
-        if (status == 200) {
-          if (text && text != " ") {
-            var jso = JSON.parse(text);
-            if (jso.error) {
-              alert(jso.error);
-            } else {
-              update_piechart(jso, "piechart_editor_holder");
-            }
-          }
-        }
-        return true;
-      });
-    };
-
-    var refresh_nodecount = function() {
-      requestQueue.register(django_url + project.id + '/stats/nodecount', "GET", {
-      }, function (status, text, xml) {
-        if (status == 200) {
-          if (text && text != " ") {
-            var jso = JSON.parse(text);
-            if (jso.error) {
-              alert(jso.error);
-            } else {
-              update_piechart(jso, "piechart_treenode_holder");
-            }
-          }
-        }
-        return true;
-      });
+      CATMAID.fetch(project.id + '/stats/editor')
+        .then(function(response) {
+          update_piechart(response, "piechart_editor_holder");
+        })
+        .catch(CATMAID.handleError);
+      return true;
     };
 
     var refresh_summary = function() {
-      requestQueue.register(django_url + project.id + '/stats/summary', "GET", {
-      }, function (status, text, xml) {
-        if (status == 200) {
-          if (text && text != " ") {
-            var jso = JSON.parse(text);
-            if (jso.error) {
-              alert(jso.error);
-            }
-            else {
-              update_stats_fields(jso);
-            }
-          }
-        }
-        return true;
-      });
+      CATMAID.fetch(project.id + '/stats/summary')
+        .then(function(response) {
+          update_stats_fields(jso);
+        })
+        .catch(CATMAID.handleError);
+      return true;
     };
 
     /**
@@ -529,6 +523,25 @@
   ProjectStatistics.prototype.getWidgetConfiguration = function() {
     var config = {
       contentID: "project_stats_widget",
+      controlsID: "project_stats_controls",
+      createControls: function(controls) {
+        var self = this;
+
+        // If this user has has can_administer permissions in this project,
+        // buttons to access additional tools are addeed.
+        if (userAnalyticsAccessible(project.id)) {
+          var userAnalytics = document.createElement('input');
+          userAnalytics.setAttribute("type", "button");
+          userAnalytics.setAttribute("value", "User Analytics");
+          userAnalytics.onclick = function() {
+            openUserAnalytics({
+              startDate: $("#stats-history-start-date").val(),
+              endDate: $("#stats-history-end-date").val()
+            });
+          };
+          controls.appendChild(userAnalytics);
+        }
+      },
       createContent: function(container) {
         container.innerHTML =
           '<div class="project-stats">' +
@@ -561,9 +574,27 @@
           '</div>' +
           '<br clear="all" />' +
           '<h3>Nodes created by user</h3>' +
+          '<div class="buttonpanel" data-role="piechart_treenode_controls"></div>' +
           '<div id="piechart_treenode_holder"></div>' +
           '<br clear="all" />' +
           '</div>';
+
+        var self = this;
+
+        var includeImports = document.createElement('label');
+        includeImports.title = "If checked, all statistics will also include " +
+            "import activity. Is only precise if history tracking is enabled.";
+        var includeImportsCb = document.createElement('input');
+        includeImportsCb.setAttribute('type', 'checkbox');
+        includeImportsCb.checked = this.includeImports;
+        includeImportsCb.onchange = function() {
+          self.includeImports = this.checked;
+          self.refreshNodecount();
+        };
+        includeImports.appendChild(includeImportsCb);
+        includeImports.appendChild(document.createTextNode('Include imports'));
+
+        $('div[data-role=piechart_treenode_controls]', container).append(includeImports);
       },
       init: function() {
         var self = this;
@@ -587,24 +618,6 @@
         this.refresh_project_statistics();
       }
     };
-
-    // If this user has has can_administer permissions in this project,
-    // buttons to access additional tools are addeed.
-    if (userAnalyticsAccessible(project.id)) {
-      config['controlsID'] = 'project_stats_controls';
-      config['createControls'] = function(controls) {
-        var userAnalytics = document.createElement('input');
-        userAnalytics.setAttribute("type", "button");
-        userAnalytics.setAttribute("value", "User Analytics");
-        userAnalytics.onclick = function() {
-          openUserAnalytics({
-            startDate: $("#stats-history-start-date").val(),
-            endDate: $("#stats-history-end-date").val()
-          });
-        };
-        controls.appendChild(userAnalytics);
-      };
-    }
 
     return config;
   };
@@ -633,8 +646,20 @@
 
   // Register widget with CATMAID
   CATMAID.registerWidget({
+    name: "Project Statistics",
+    description: "Show user statistics for this project",
     key: "statistics",
-    creator: ProjectStatistics
+    creator: ProjectStatistics,
+    state: {
+      getState: function(widget) {
+        return {
+          includeImports: widget.includeImports
+        };
+      },
+      setState: function(widget, state) {
+        CATMAID.tools.copyIfDefined(state, widget, "includeImports");
+      }
+    }
   });
 
 })(CATMAID);

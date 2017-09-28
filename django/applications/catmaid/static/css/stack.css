@@ -161,6 +161,11 @@ div.LayerControl .layerControl {
   counter-increment: order-counter;
 }
 
+div.LayerControl .customselect {
+  color: black;
+  margin-top: 0.3em;
+}
+
 .layerControl.orderable {
   background: #111;
 }
@@ -319,7 +324,7 @@ div.stackControlToggle_hidden {
   z-index: 10;
 }
 
-.stackViewer p.neuronname {
+.stackViewer p.active-element {
   position: absolute;
   right: 60px;
   top: 0;
@@ -361,7 +366,7 @@ div.stackControlToggle_hidden {
   background-color: #850084;
 }
 
-.stackViewer p.neuronname:empty {
+.stackViewer p.active-element:empty {
   display: none;
 }
 

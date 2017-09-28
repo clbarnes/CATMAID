@@ -1,9 +1,9 @@
+from __future__ import absolute_import
 # If you don't have settings.py in this directory, you should copy
 # this file to settings.py and customize it.
 
 from mysite.settings_base import *
 import hashlib
-import djcelery
 
 DATABASES = {
     'default': {
@@ -12,8 +12,8 @@ DATABASES = {
         'NAME': 'CATMAID_DATABASE_NAME',      # Or path to database file if using sqlite3.
         'USER': 'CATMAID_DATABASE_USERNAME',  # Not used with sqlite3.
         'PASSWORD': 'CATMAID_DATABASE_PASSWORD',  # Not used with sqlite3.
-        'HOST': '',                           # Set to empty string for localhost. Not used with sqlite3.
-        'PORT': '',                           # Set to empty string for default. Not used with sqlite3.
+        'HOST': 'CATMAID_DATABASE_HOST',      # Set to empty string for localhost. Not used with sqlite3.
+        'PORT': 'CATMAID_DATABASE_PORT',      # Set to empty string for default. Not used with sqlite3.
     }
 }
 
@@ -88,13 +88,6 @@ HDF5_STORAGE_PATH = 'CATMAIDPATH/django/hdf5/'
 # imported stacks don't provide their URL explicitly.
 CATMAID_IMPORT_PATH = 'CATMAIDPATH/httpdocs/data'
 IMPORTER_DEFAULT_IMAGE_BASE = 'http://CATMAID_SERVERNAME/CATMAID_SUBDIR/data'
-
-## Celery configuration
-djcelery.setup_loader()
-CELERYD_CONCURRENCY = 1
-# Simple django-kumbo message broker
-INSTALLED_APPS += ("kombu.transport.django",)
-BROKER_URL = 'django://'
 
 # The URL under which custom front-end code can be made available
 STATIC_EXTENSION_URL = '/CATMAID_SUBDIR/staticext/'

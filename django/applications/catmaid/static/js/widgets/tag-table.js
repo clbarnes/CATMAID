@@ -12,7 +12,9 @@
     /**
      * Skeleton source which is registered and other widgets can use
      */
-    this.resultSkeletons = new CATMAID.BasicSkeletonSource(this.getName());
+    this.resultSkeletons = new CATMAID.BasicSkeletonSource(this.getName(), {
+      owner: this
+    });
 
     var constrainSkelsAndRedraw = this.constrainSkelsAndRedraw.bind(this);
 
@@ -25,7 +27,6 @@
       handleChangedModels: constrainSkelsAndRedraw,
       handleRemovedModels: constrainSkelsAndRedraw
     });
-    CATMAID.skeletonListSources.updateGUI();
 
     this.oTable = null;  // Initialise DataTables API instance
   };
@@ -506,6 +507,11 @@
     this.unregisterInstance();
   };
 
-  CATMAID.registerWidget({key: 'tag-table', creator: TagTable});
+  CATMAID.registerWidget({
+    name: "Tag Table",
+    description: "List all tagged nodes of a skeleton",
+    key: 'tag-table',
+    creator: TagTable
+  });
 
 })(CATMAID);

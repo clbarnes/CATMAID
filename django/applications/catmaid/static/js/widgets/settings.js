@@ -3,7 +3,6 @@
 /* global
   CATMAID,
   project,
-  requestQueue,
   SkeletonAnnotations,
   WindowMaker
 */
@@ -322,6 +321,36 @@
           'prefer_webgl',
           SETTINGS_SCOPE));
 
+      // Hide layers if nearest section is broken
+      ds.append(wrapSettingsControl(
+          CATMAID.DOM.createCheckboxSetting(
+              "Hide layers if nearest section broken",
+              CATMAID.TileLayer.Settings[SETTINGS_SCOPE].hide_if_nearest_section_broken,
+              'Whether to hide tile layers by default if the nearest section ' +
+              'is marked as broken, rather than displaying the nearest non-broken ' +
+              'section. This can be adjusted for each individual layer.',
+              function() {
+                CATMAID.TileLayer.Settings[SETTINGS_SCOPE].hide_if_nearest_section_broken = this.checked;
+              }),
+          CATMAID.TileLayer.Settings,
+          'hide_if_nearest_section_broken',
+          SETTINGS_SCOPE));
+
+      // Skip broken sections of extra tile layers
+      ds.append(wrapSettingsControl(
+          CATMAID.DOM.createCheckboxSetting(
+              "Skip broken sections of extra tile layers by default",
+              CATMAID.StackViewer.Settings[SETTINGS_SCOPE].respect_broken_sections_new_stacks,
+              'Choose whether layers added after the first one should be ' +
+              'respected by default when checking for broken sections during ' +
+              'navigation.',
+              function() {
+                CATMAID.StackViewer.Settings[SETTINGS_SCOPE].respect_broken_sections_new_stacks = this.checked;
+              }),
+          CATMAID.StackViewer.Settings,
+          'respect_broken_sections_new_stacks',
+          SETTINGS_SCOPE));
+
       // Major section step size
       ds.append(wrapSettingsControl(
           CATMAID.DOM.createNumericInputSetting(
@@ -391,6 +420,34 @@
               CATMAID.StackViewer.Settings[SETTINGS_SCOPE].layer_insertion_strategy),
           CATMAID.StackViewer.Settings,
           'layer_insertion_strategy',
+          SETTINGS_SCOPE));
+
+      // Default layouts
+      var defaultLayoutInput = CATMAID.DOM.createInputSetting(
+          "Default layouts",
+          CATMAID.Layout.Settings[SETTINGS_SCOPE].default_layouts.join(', '),
+          "A list of default layouts of which the first one matched will be " +
+          "applied. Use v(a,b) and h(a,b) for vertical and horizontal splits, " +
+          "o(a) for optional windows, where a and b can each be other v() or " +
+          "h() nodes, one of [XY, XZ, ZY, F1, X3D] or any widget handle (see " +
+          "<kbd>Ctrl</kbd> + <kbd>Space</kbd>). At the moment, with o(a), " +
+          "\"a\" can't be XY, XZ or ZY. Use X3D to reference the 3D Viewer.",
+          function() {
+            let defaultLayouts = CATMAID.Layout.parseLayoutSpecList(this.value);
+            CATMAID.Layout.Settings
+                .set(
+                  'default_layouts',
+                  defaultLayouts,
+                  SETTINGS_SCOPE);
+          });
+      $('input', defaultLayoutInput)
+        .css('width', '30em')
+        .css('font-family', 'monospace');
+
+      ds.append(wrapSettingsControl(
+          defaultLayoutInput,
+          CATMAID.Layout.Settings,
+          'default_layouts',
           SETTINGS_SCOPE));
     };
 
@@ -603,7 +660,7 @@
                     "Reference the Nth component by using \"%N\". " +
                     "Use \"%f\" for a fallback that uses first available component " +
                     "from the top. Optionally, append \"{<em>delimiter</em>}\" to specify " +
-                    "how component values should be separeted, defaulting to \"{, }\".",
+                    "how component values should be separated, defaulting to \"{, }\".",
                     function () {
                       CATMAID.NeuronNameService.Settings
                         .set(
@@ -948,6 +1005,7 @@
         return {
           "visible": skpVisible.find('input').prop('checked'),
           "shadingMode": skpShading.val(),
+          "preferSourceColor": skpPreferSourceColor.find('input').prop('checked'),
           "downstreamColor": new THREE.Color(skpDownstreamColor.find('input').val()).getHex(),
           "upstreamColor": new THREE.Color(skpUpstreamColor.find('input').val()).getHex(),
           "showEdges": skpShowEdges.find('input').prop('checked'),
@@ -977,6 +1035,7 @@
             }
           } else if (layer) {
             sv.removeLayer("skeletonprojection");
+            sv.redraw();
           }
         });
       }
@@ -1398,17 +1457,18 @@
           });
       dsTracingWarnings.append(twVolumeSelect);
 
-      // Get volumes asynchronously
-      requestQueue.register(CATMAID.makeURL(project.id + "/volumes"), "GET",
-            undefined, CATMAID.jsonResponseHandler(function(json) {
-              var currentWarningVolumeID = SkeletonAnnotations.getNewNodeVolumeWarning();
-              var select = twVolumeSelect.find("select")[0];
-              json.forEach(function(volume) {
-                var name = volume.name + " (#" + volume.id + ")";
-                var selected = currentWarningVolumeID == volume.id ? true : undefined;
-                select.options.add(new Option(name, volume.id, selected, selected));
-              });
-            }));
+      // Get volumes
+      CATMAID.fetch(project.id + "/volumes/")
+        .then(function(json) {
+          var currentWarningVolumeID = SkeletonAnnotations.getNewNodeVolumeWarning();
+          var select = twVolumeSelect.find("select")[0];
+          json.forEach(function(volume) {
+            var name = volume.name + " (#" + volume.id + ")";
+            var selected = currentWarningVolumeID == volume.id ? true : undefined;
+            select.options.add(new Option(name, volume.id, selected, selected));
+          });
+        })
+        .catch(CATMAID.handleError);
     };
 
 
@@ -1450,6 +1510,8 @@
 
   // Register widget with CATMAID
   CATMAID.registerWidget({
+    name: "Settings",
+    description: "Configure CATMAID",
     key: 'settings',
     creator: SettingsWidget
   });

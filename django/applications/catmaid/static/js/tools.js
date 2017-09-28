@@ -40,6 +40,13 @@ CATMAID.tools = CATMAID.tools || {};
   };
 
   /**
+   * Compare two numbers, can be used with sort().
+   */
+  tools.compareNumbers = function(a, b) {
+    return a - b;
+  };
+
+  /**
    * Compare two objects that represent HSL colors. Sorting is done by hue, then
    * saturation then luminance.
    */
@@ -226,11 +233,15 @@ CATMAID.tools = CATMAID.tools || {};
    * Copy from source[sourceField] to target[targetField] if and only if both
    * are defined.
    */
-  tools.copyIfDefined = function(source, target, sourceField, targetField) {
+  tools.copyIfDefined = function(source, target, sourceField, targetField, mapFn) {
     targetField = targetField || sourceField;
     if (source && source.hasOwnProperty(sourceField) &&
         target && target.hasOwnProperty(targetField)) {
-      target[targetField] = source[sourceField];
+      if (CATMAID.tools.isFn(mapFn)) {
+        target[targetField] = mapFn(source[sourceField]);
+      } else {
+        target[targetField] = source[sourceField];
+      }
     }
   };
 
@@ -406,6 +417,66 @@ CATMAID.tools = CATMAID.tools || {};
     };
   })();
 
+  tools.numberSuffix = function(n) {
+    return n > 1 ? 's' : '';
+  };
+
+  /**
+   * Return a human readable form of an amount of milliseconds.
+   */
+  tools.humanReadableTimeInterval = (function() {
+
+    var defaultTimeComponents = new Set(["sec", "min", "hours", "days"]);
+    var msPerSecond = 1000;
+    var msPerMinute = 60 * msPerSecond;
+    var msPerHour   = 60 * msPerMinute;
+    var msPerDay    = 24 * msPerHour;
+
+    return function(ms, components) {
+      components = components || defaultTimeComponents;
+
+      var units = [];
+      var values = [];
+      if (components.has("days")) {
+        units.push("d");
+        values.push(ms / msPerDay); ms %= msPerDay;
+      }
+      if (components.has("hours")) {
+        units.push("h");
+        values.push(ms / msPerHour); ms %= msPerHour;
+      }
+      if (components.has("min")) {
+        units.push("min");
+        values.push(ms / msPerMinute); ms %= msPerMinute;
+      }
+      if (components.has("sec")) {
+        units.push("sec");
+        values.push(ms / msPerSecond); ms %= msPerSecond;
+      }
+
+      var pretty = "";
+      var addedComponents = 0;
+      for (var i=0; i<values.length; ++i) {
+        var val = Math.floor(values[i]);
+        if(val <= 0) continue;
+        if (addedComponents > 0) {
+          pretty += " ";
+        }
+
+        pretty += val + units[i];
+        ++addedComponents;
+      }
+
+      // If there is no valid time representation found, state the passed in
+      // value is smaller than the smallest available time unit.
+      if (!pretty) {
+        pretty = "< "+ (values.length === 0 ? "infinity" : ("1" + units[units.length - 1]));
+      }
+
+      return pretty;
+    };
+  })();
+
   /**
    * Escape a string so it can be used in a regular expression without
    * triggering any regular expression patern (e.g. to search for slashes).
@@ -565,6 +636,32 @@ CATMAID.tools = CATMAID.tools || {};
     }
 
     return target;
+  };
+
+  tools.getDateSuffix = function() {
+    var now = new Date();
+    return now.getFullYear() + '-' + now.getMonth() + '-' + now.getDay() + '-' + now.getHours() + '-' + now.getMinutes();
+  };
+
+  /**
+   * Cast the passed in value to a number. If this is not possible, show a
+   * warning and return null. Optionally, a bounds check with min and max values
+   * can be performed. If not provided, min is set to negative infinity and max
+   * to positive infinity. If the value is out of bounds, null is returned as
+   * well.
+   */
+  tools.validateNumber = function(number, errorMessage, min, max) {
+    if (!number) return null;
+    var min = typeof(min) === "number" ? min : -Infinity;
+    var max = typeof(max) === "number" ? max : Infinity;
+    var value = +number; // cast
+    if (Number.isNaN(value) || value < min || value > max) {
+      if (errorMessage) {
+        CATMAID.warn(errorMsg);
+      }
+      return null;
+    }
+    return value;
   };
 
 })(CATMAID.tools);

@@ -25,7 +25,9 @@
       handleRemovedModels: update
     });
     // A skeleton source to collect results in
-    this.resultSkeletonSource = new CATMAID.BasicSkeletonSource(this.getName());
+    this.resultSkeletonSource = new CATMAID.BasicSkeletonSource(this.getName(), {
+      owner: this
+    });
 
     // The displayed data table
     this.connectorTable = null;
@@ -36,8 +38,6 @@
     if (skeletonModels) {
       this.skeletonSource.append(skeletonModels);
     }
-
-    CATMAID.skeletonListSources.updateGUI();
   };
 
   ConnectorTable.prototype = {};
@@ -129,8 +129,6 @@
       contentID: this.idPrefix + 'content',
       createContent: function(content) {
         var self = this;
-        var possibleLengths = CATMAID.pageLengthOptions;
-        var possibleLengthsLabels = CATMAID.pageLengthLabels;
 
         var container = document.createElement('div');
         content.appendChild(container);
@@ -308,6 +306,8 @@
 
   // Register widget with CATMAID
   CATMAID.registerWidget({
+    name: "Connector Table",
+    description: "List connectors of neurons",
     key: 'connector-table',
     creator: ConnectorTable
   });

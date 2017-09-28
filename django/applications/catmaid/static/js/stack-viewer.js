@@ -26,13 +26,19 @@
     this.primaryStack = primaryStack;
     this._stacks = [primaryStack];
 
+    // The stacks broken slices should be respected of
+    this._brokenSliceStacks = new Set([this.primaryStack]);
+    // An updated list of valid sections
+    this._validSections = null;
+    this._updateValidSections();
+
     this._offset = [0, 0, 0];
 
     this._widgetId = this.registerInstance();
 
     // take care, that all values are within a proper range
     // Declare the x,y,z,s as coordinates in pixels
-    this.z = primaryStack.isSliceBroken(0) ? primaryStack.validZDistanceAfter(0): 0;
+    this.z = this.toValidZ(0, 1);
     this.y = Math.floor( primaryStack.MAX_Y / 2 );
     this.x = Math.floor( primaryStack.MAX_X / 2 );
     this.s = primaryStack.MAX_S;
@@ -54,6 +60,7 @@
     this._tool = null;
     this._layers = new Map();
     this._layerOrder = [];
+
     /**
      * Whether redraws in this stack viewer should be blocking, that is,
      * whether layers that have asynchronous redraws must wait for redraw to
@@ -144,6 +151,119 @@
   $.extend(StackViewer.prototype, new InstanceRegistry());
   StackViewer.prototype.constructor = StackViewer;
 
+  /**
+   * Get a valid Z location based on all stacks that are selected to be
+   * respected.
+   *
+   * @params {Number}  z         The z location to verify
+   * @params {Number}  step      The number of sections to move in case of a
+   *                             broken section.
+   * @params {Boolean} allowZero Optional, whether a distance of zero should be
+   *                             returned if the passed in Z is valid. Default
+   *                             is false.
+   * @return The passed in Z is valid, otherwise the next valid Z either after
+   *         or before (<step> sections away). Optionally, a zero distance can
+   *         be allowed as well.
+   */
+  StackViewer.prototype.validZDistanceByStep = function(z, step, allowZero) {
+    if (allowZero) {
+      // If a zero step is allowed, check if the passed in Z is valid.
+      if (this.isValidZ(z)) {
+        return 0;
+      }
+    }
+    // Without any stacks that should be tested for broken sections, the new
+    // section is only invalid if it is below zero or above the max Z of the
+    // reference stack.
+    if (this._brokenSliceStacks.size === 0) {
+      var newSection = z + step;
+      return (newSection < 0 || newSection > referenceStack.MAX_Z) ? null : step;
+    }
+    // Find Z that is valid for all respected stacks. Use a random reference
+    // stack with broken sections to do better informed steps.
+    var referenceStack = Array.from(this._brokenSliceStacks.keys())[0];
+    var testDistance = step;
+    while (true) {
+      var newSection = z + testDistance;
+      if (newSection < 0 || newSection > this.primaryStack.MAX_Z) {
+        return null;
+      }
+      if (!this.isSliceBroken(newSection)) {
+        return testDistance;
+      }
+      var distance = referenceStack.validZDistanceByStep(newSection, step);
+      if (!distance) {
+        return null;
+      }
+      testDistance += distance;
+    }
+  };
+
+  StackViewer.prototype.getValidSections = function() {
+    return this._validSections;
+  };
+
+  StackViewer.prototype.isValidZ = function(z) {
+    return (z < 0 || z > this.primaryStack.MAX_Z) ?
+        null : !this.isSliceBroken(z);
+  };
+
+  /**
+   * Returns the passed in Z if it is valid, otherwise the next valid step
+   * spaced Z.
+   */
+  StackViewer.prototype.toValidZ = function(z, step) {
+    var distance = this.validZDistanceByStep(z, step, true);
+    if (distance === null || distance === undefined) {
+      throw new CATMAID.Warning("Couldn't find valid Z section");
+    }
+    // If the returned valid distance is exactly one step,
+    return z + distance;
+  };
+
+  StackViewer.prototype.validZDistanceBefore = function(z) {
+    return this.validZDistanceByStep(z, -1);
+  };
+
+  StackViewer.prototype.validZDistanceAfter = function(z) {
+    return this.validZDistanceByStep(z, 1);
+  };
+
+  /**
+   * Test if a particular Z section is broken in at least one stack that is
+   * respected for this operation.
+   */
+  StackViewer.prototype.isSliceBroken = function(z) {
+    // This uses layers
+    for (var stack of this._brokenSliceStacks) {
+      if (stack.isSliceBroken(z)) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  StackViewer.prototype.addBrokenSliceStack = function(stack) {
+    this._brokenSliceStacks.add(stack);
+    this._updateValidSections();
+  };
+
+  StackViewer.prototype.removeBrokenSliceStack = function(stack) {
+    this._brokenSliceStacks.delete(stack);
+    this._updateValidSections();
+  };
+
+  StackViewer.prototype._updateValidSections = function() {
+    var validSections = new Set();
+    for (var stack of this._brokenSliceStacks) {
+      var validStackSections = stack.slices;
+      for (var i=0, max=validStackSections.length; i<max; ++i) {
+        validSections.add(validStackSections[i]);
+      }
+    }
+    this._validSections = Array.from(validSections).sort(CATMAID.tools.compareNumbers);
+  };
+
   StackViewer.LayerInsertionStrategy = {
     "append": {
       move: function(stackViewer, layer, key) {
@@ -188,7 +308,7 @@
     }
 
     if (this._offset && this._offset.some(Math.abs)) {
-      title = title + ' (Offset ' + offset.join(', ') + ')';
+      title = title + ' (Offset ' + this._offset.join(', ') + ')';
     }
 
     this._stackWindow.setTitle(title);
@@ -230,7 +350,7 @@
   /**
    * update all state informations and the screen content
    */
-  StackViewer.prototype.update = function (completionCallback) {
+  StackViewer.prototype.update = function (completionCallback, errorCallback) {
     this.overview.redraw();
     if (this.s !== this.old_s) this.updateScaleBar();
 
@@ -502,8 +622,8 @@
    * Similar to the moveTo functionality in project.js, this wouldn't be
    * possible to do with loops.
    */
-  StackViewer.prototype.moveToAfterBeforeMoves = function (
-      zp, yp, xp, sp, completionCallback, layersWithBeforeMove) {
+  StackViewer.prototype.moveToAfterBeforeMoves = function (zp, yp, xp, sp,
+      layersWithBeforeMove) {
     var layerWithBeforeMove;
 
     if ( layersWithBeforeMove.length === 0 )
@@ -521,17 +641,18 @@
       this.y = this.primaryStack.projectToUnclampedStackY( zp, yp, xp ) + this._offset[1];
       this.z = this.primaryStack.projectToUnclampedStackZ( zp, yp, xp ) + this._offset[2];
 
-      this.update( completionCallback );
-
+      return new Promise((function(resolve, reject) {
+        this.update(resolve, reject);
+      }).bind(this));
     }
     else
     {
       // Otherwise do the next layer's beforeMove() and call self recursively as
       // a continuation of it.
       layerWithBeforeMove = layersWithBeforeMove.shift();
-      layerWithBeforeMove.beforeMove(
-        this.moveToAfterBeforeMoves.bind(this, zp, yp, xp, sp, completionCallback, layersWithBeforeMove)
-      );
+      return layerWithBeforeMove.beforeMove()
+        .then(this.moveToAfterBeforeMoves.bind(this, zp, yp, xp, sp,
+            layersWithBeforeMove));
     }
   };
 
@@ -556,15 +677,11 @@
       }
     });
 
-    var self = this;
-    return new Promise(function(resolve, reject) {
-      var done = completionCallback ? function() {
-        completionCallback();
-        resolve();
-      } : resolve;
-
-      self.moveToAfterBeforeMoves( zp, yp, xp, sp, done, layersWithBeforeMove );
-    });
+    var afterBeforeMoves = this.moveToAfterBeforeMoves(zp, yp, xp, sp, layersWithBeforeMove);
+    if (completionCallback) {
+      afterBeforeMoves.then(completionCallback);
+    }
+    return afterBeforeMoves;
   };
 
   /**
@@ -709,6 +826,19 @@
   };
 
   /**
+   * Return an ordered array of layers which are instances of the given type.
+   *
+   * @param type
+   */
+  StackViewer.prototype.getOrderedLayersOfType = function(type) {
+    return this._layerOrder.map(function(key) {
+      return this.get(key);
+    }, this.getLayers()).filter(function(layer) {
+      return layer instanceof type;
+    });
+  };
+
+  /**
    * Look up a layer's key using the layer itself.
    *
    * @param  {Object}  needle The layer object.
@@ -783,6 +913,7 @@
         if (!otherStackLayers) {
           // Remove that stack from this stack viewer and update the tool.
           this._stacks = this._stacks.filter(function (s) { return s.id !== layer.stack.id; });
+          this._brokenSliceStacks.delete(layer.stack);
           if (this._tool) {
             this._tool.unregister(this);
             this._tool.register(this);
@@ -853,6 +984,9 @@
     }
 
     this._stacks.push(stack);
+    if (StackViewer.Settings.session.respect_broken_sections_new_stacks) {
+      this._brokenSliceStacks.add(stack);
+    }
     this.addLayer('TileLayer' + stack.id, layer);
     if (this._tool) {
       this._tool.unregister(this);
@@ -949,7 +1083,10 @@
           },
           layer_insertion_strategy: {
             default: "image-data-first"
-          }
+          },
+          respect_broken_sections_new_stacks: {
+            default: false
+          },
         },
         migrations: {}
       });

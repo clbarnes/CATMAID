@@ -313,9 +313,10 @@ var requestQueue = new RequestQueue();
   /**
    * Check if the passed in response information seems valid and without errors.
    */
-  CATMAID.validateResponse = function(status, text, xml) {
+  CATMAID.validateResponse = function(status, text, xml, responseType) {
+    var isTextResponse = !responseType || responseType === '' || responseType === 'text';
     if (status >= 200 && status <= 204 &&
-        (typeof text === 'string' || text instanceof String)) {
+        (!isTextResponse || typeof text === 'string' || text instanceof String)) {
       return text;
     } else {
       throw new CATMAID.Error("The server returned an unexpected status: " + status);
@@ -369,8 +370,10 @@ var requestQueue = new RequestQueue();
    *                          refer to with replace.
    * @param {Boolean} replace (Optional) If truthy, a request with the same ID
    *                          is replaced by this one.
+   * @param {String}  responseType (Optional) An expected response type for the
+   *                               request (e.g. text or blob).
    */
-  CATMAID.fetch = function(relativeURL, method, data, raw, id, replace) {
+  CATMAID.fetch = function(relativeURL, method, data, raw, id, replace, responseType) {
     method = method || 'GET';
     return new Promise(function(resolve, reject) {
       var url = CATMAID.makeURL(relativeURL);
@@ -382,7 +385,7 @@ var requestQueue = new RequestQueue();
         // case, we have to call reject() explicitly.
         try {
           if (raw) {
-            var response = CATMAID.validateResponse(status, text, xml);
+            var response = CATMAID.validateResponse(status, text, xml, responseType);
             resolve(text);
           } else {
             var json = CATMAID.validateJsonResponse(status, text, xml);
@@ -391,7 +394,7 @@ var requestQueue = new RequestQueue();
         } catch (e) {
           reject(e);
         }
-      }, id);
+      }, id, responseType);
     });
   };
 
@@ -496,6 +499,52 @@ var requestQueue = new RequestQueue();
    */
   CATMAID.getOption = function(options, key, defaultValue) {
     return options.hasOwnProperty(key) ? options[key] : defaultValue;
+  };
+
+  /**
+   * Test if <files> is a valid source of a single JSON file name.
+   */
+  CATMAID.isValidJSONFile = function(files) {
+      if (0 === files.length) {
+        CATMAID.error("Choose at least one file!");
+        return false;
+      }
+      if (files.length > 1) {
+        CATMAID.error("Choose only one file!");
+        return false;
+      }
+
+      var name = files[0].name;
+      if (name.lastIndexOf('.json') !== name.length - 5) {
+        CATMAID.error("File extension must be '.json'");
+        return false;
+      }
+
+      return true;
+  };
+
+  /**
+   * Return a function to perform text matching, either as substring or as a regular expression when the text starts with a '/'. Returns null if the text is not suitable.
+   */
+  CATMAID.createTextMatchingFunction = function(text) {
+    text = text.trim();
+    if (!text) {
+      CATMAID.msg("Select by regular expression", "No text.");
+      return null;
+    }
+    var match;
+    if ('/' === text[0]) {
+      // Search by regular expression
+      match = (function(regexp, label) {
+        return regexp.test(label);
+      }).bind(null, new RegExp(text.substr(1), 'i'));
+    } else {
+      // Search by indexOf
+      match = function(label) {
+        return -1 !== label.indexOf(text);
+      };
+    }
+    return match;
   };
 
 })(CATMAID);

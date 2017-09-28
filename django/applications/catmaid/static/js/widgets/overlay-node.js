@@ -389,7 +389,7 @@
             SkeletonAnnotations.VisibilityGroups.areGroupsVisible(this.getVisibilityGroups());
       };
 
-      this.updateVisibility = function () {
+      this.updateVisibility = function (noCache) {
         if (this.c) {
           var visible = this.isVisible();
           this.c.visible = visible;
@@ -401,7 +401,7 @@
           this.line.visible = this.parent &&
             this.mustDrawLineWith(this.parent) &&
             !this.line.tooShort &&
-            SkeletonAnnotations.VisibilityGroups.areGroupsVisible(this.getVisibilityGroups());
+            SkeletonAnnotations.VisibilityGroups.areGroupsVisible(this.getVisibilityGroups(noCache));
         }
       };
 
@@ -487,8 +487,8 @@
              this.overlayGlobals.skeletonDisplayModels.hasOwnProperty(this.skeleton_id));
       };
 
-      this.getVisibilityGroups = function () {
-        if (this.visibilityGroups) return this.visibilityGroups;
+      this.getVisibilityGroups = function (noCache) {
+        if (this.visibilityGroups && !noCache) return this.visibilityGroups;
 
         this.visibilityGroups = [];
 
@@ -1059,8 +1059,8 @@
       this.linkGroups = ['pregroup', 'postgroup', 'gjgroup', 'undirgroup'];
       this.lineGroups = ['preLines', 'postLines', 'gjLines', 'undirLines'];
 
-      this.getVisibilityGroups = function () {
-        if (this.visibilityGroups) return this.visibilityGroups;
+      this.getVisibilityGroups = function (noCache) {
+        if (this.visibilityGroups && !noCache) return this.visibilityGroups;
 
         this.visibilityGroups = [];
 
@@ -1077,7 +1077,7 @@
         // if *any* linked treenode is in the override group.
         var links = this.getLinks();
         links.forEach(function (link) {
-          link.treenode.getVisibilityGroups().forEach(function (groupID) {
+          link.treenode.getVisibilityGroups(noCache).forEach(function (groupID) {
             groupCounts[groupID]++;
           });
         });
@@ -1119,6 +1119,15 @@
 
       this.getLinks = function() {
         return this.linkGroups.reduce(this.expandGroup.bind(this), []);
+      };
+
+      this.removeLink = function(link) {
+        this.linkGroups.forEach(function(groupName) {
+          var group = this[groupName];
+          if (group[link.treenode.id] === link) {
+            delete group[link.treenode.id];
+          }
+        }, this);
       };
 
       /**
@@ -1222,9 +1231,9 @@
         }
       };
 
-      this.updateVisibility = function () {
+      this.updateVisibility = function (noCache) {
         if (this.shouldDisplay() && this.c) {
-          this.c.visible = SkeletonAnnotations.VisibilityGroups.areGroupsVisible(this.getVisibilityGroups());
+          this.c.visible = SkeletonAnnotations.VisibilityGroups.areGroupsVisible(this.getVisibilityGroups(noCache));
         }
 
         if (this.preLines)
@@ -1362,6 +1371,10 @@
 
     addIsoTimeAccessor(ptype.ConnectorLink.prototype, 'edition_time');
 
+    function eventShouldActiveNode(e) {
+      return !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey;
+    }
+
     /**
      * Event handling functions.
      * Below, the function() is but a namespace that returns a manager object
@@ -1411,7 +1424,8 @@
                 }
                 // careful, atnID is a connector
                 SkeletonAnnotations.atn.subtype = CATMAID.Connectors.SUBTYPE_GAPJUNCTION_CONNECTOR;
-                catmaidTracingOverlay.createLink(node.id, atnID, "gapjunction_with");
+                catmaidTracingOverlay.createLink(node.id, atnID, "gapjunction_with")
+                  .catch(CATMAID.handleError);
               }  else if (atnSubType === CATMAID.Connectors.SUBTYPE_SYNAPTIC_CONNECTOR) {
                 if (!CATMAID.mayEdit()) {
                   CATMAID.error("You lack permissions to declare node #" + node.id +
@@ -1419,7 +1433,8 @@
                   return;
                 }
                 // careful, atnID is a connector
-                catmaidTracingOverlay.createLink(node.id, atnID, "postsynaptic_to");
+                catmaidTracingOverlay.createLink(node.id, atnID, "postsynaptic_to")
+                  .catch(CATMAID.handleError);
               } else if (atnSubType === CATMAID.Connectors.SUBTYPE_ABUTTING_CONNECTOR) {
                 if (!CATMAID.mayEdit()) {
                   CATMAID.error("You lack permissions to declare node #" + node.id +
@@ -1427,7 +1442,8 @@
                   return;
                 }
                 // careful, atnID is a connector
-                catmaidTracingOverlay.createLink(node.id, atnID, "abutting");
+                catmaidTracingOverlay.createLink(node.id, atnID, "abutting")
+                  .catch(CATMAID.handleError);
               } else {
                 CATMAID.error("Unknown connector subtype: " + atnSubType);
                 return;
@@ -1445,13 +1461,9 @@
               // TODO check for error
               CATMAID.statusBar.replaceLast("Joined node #" + atnID + " to node #" + node.id);
             }
-
           } else {
             alert("Nothing to join without an active node!");
           }
-        } else {
-          // activate this node
-          catmaidTracingOverlay.activateNode(node);
         }
       };
 
@@ -1477,7 +1489,7 @@
         var newPosition = o.data.getLocalPosition(this.parent);
         if (!dragging) {
           var l1Distance = Math.abs(newPosition.x - node.x) + Math.abs(newPosition.y - node.y);
-          if (l1Distance > node.scaling * 0.5) {
+          if (l1Distance > node.stackScaling * 0.5) {
             dragging = true;
             this.alpha = 0.7;
           } else {
@@ -1533,6 +1545,16 @@
             .removeAllListeners('mouseup')
             .removeAllListeners('mouseupoutside');
 
+        var node = this.node;
+        var catmaidTracingOverlay = SkeletonAnnotations.getTracingOverlayBySkeletonElements(
+            node.overlayGlobals.skeletonElements);
+        var e = event.data.originalEvent;
+
+        if (eventShouldActiveNode(e) && !(o && o.activated)) {
+          // Activate this node if not already done
+          catmaidTracingOverlay.activateNode(node);
+        }
+
         if (!dragging) {
           o = null;
           return;
@@ -1572,13 +1594,15 @@
         e.stopPropagation();
         e.preventDefault();
 
-        // If not trying to join or remove a node, but merely click on it to drag it or select it:
-        if (!e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
-          catmaidTracingOverlay.activateNode(node);
-        }
-
         o = {id: node.id,
              data: event.data};
+
+        // If not trying to join or remove a node, but merely click on it to
+        // drag it or select it already on mous down.
+        if (eventShouldActiveNode(e)) {
+          o.activated = true;
+          catmaidTracingOverlay.activateNode(node);
+        }
 
         this.on('mousemove', mc_move)
             .on('mouseup', mc_up)
@@ -1624,16 +1648,14 @@
                 CATMAID.error("The selected connector is of unknown type: " + connectornode.subtype);
                 return;
               }
-              catmaidTracingOverlay.createLink(atnID, connectornode.id, linkType);
+              catmaidTracingOverlay.createLink(atnID, connectornode.id, linkType)
+                .catch(CATMAID.handleError);
               CATMAID.statusBar.replaceLast("Joined node #" + atnID + " with connector #" + connectornode.id);
             }
           } else {
             CATMAID.msg('BEWARE', 'You need to activate a node before ' +
                 'joining it to a connector node!');
           }
-        } else {
-          // activate this node
-          catmaidTracingOverlay.activateNode(connectornode);
         }
       };
 
@@ -1838,8 +1860,8 @@
         this.line.visible = this.visibility;
       };
 
-      this.updateVisibility = function (connector) {
-        this.visibility = SkeletonAnnotations.VisibilityGroups.areGroupsVisible(connector.getVisibilityGroups());
+      this.updateVisibility = function (connector, noCache) {
+        this.visibility = SkeletonAnnotations.VisibilityGroups.areGroupsVisible(connector.getVisibilityGroups(noCache));
         this.show();
       };
 

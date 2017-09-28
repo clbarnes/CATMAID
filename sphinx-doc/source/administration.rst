@@ -136,6 +136,19 @@ and the actual ``pg_dump`` call is executed as `postgres` user with the help of
 more complicated than this, it is recommended to create a script file and call
 this from cron.
 
+Modifying the database directly
+-------------------------------
+
+To avoid database triggers firing during direct database modifications, the
+following SQL can be used to disable triggers temporarily::
+
+  SET session_replication_role = replica;
+  
+  /* Do your edits */
+  
+  SET session_replication_role = DEFAULT;
+
+
 .. _performance-tuning:
 
 Adding custom code
@@ -182,6 +195,19 @@ Operating system and infrastructure
   CATMAID is running or the image data is loaded from, LDAP queries should be
   cached locally. Otherwise, an LDAP request will be made every time a file is
   accessed.
+
+* If the your server has a lot of memory, the Linux kernel defaults for the
+  threshold for writing dirty memory pages to disk are too high (10% of the
+  available memory for start writing out, 20% for absolute maximum before I/O
+  blocks until write-out is done). To avoid large write-out spikes, it is
+  advisable to have the kernel start writing out dirty pages after a lower
+  threshold, e.g. 256MB: ``vm.dirty_background_bytes = 268435456``. Also, the
+  threshold for the absolute maximum dirty memory threshold before I/O blocks
+  until the write-out is finished should be lowered, to e.g. 1GB:
+  ``vm.dirty_bytes = 107374182``.
+
+* The kernel should also be discouraged to swap cached data by setting
+  ``vm.swappiness = 10``.
 
 Webserver
 ^^^^^^^^^
@@ -295,6 +321,11 @@ CATMAID
   number of returned nodes can be limited. This can be done by setting
   ``NODE_LIST_MAXIMUM_COUNT = <number>`` in the ``settings.py`` file to a
   maximum number of nodes to be queried (e.g. 20000).
+
+* If neuron reconstruction statistics are slow to compute, consider running the
+  management command ``manage.py catmaid_populate_summary_tables`` to populate
+  an optional statistics summary table. Consider running this command regularly
+  over, e.g. over night using Celery or a cron job.
 
 Making CATMAID available through SSL
 ------------------------------------

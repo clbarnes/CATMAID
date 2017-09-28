@@ -397,7 +397,7 @@
     var models = {};
     if (this.currentSkeletonId) {
       models[this.currentSkeletonId] = new CATMAID.SkeletonModel(
-          this.currentSkeletonId, "", new THREE.Color().setRGB(1, 1, 0));
+          this.currentSkeletonId, "", new THREE.Color(1, 1, 0));
     }
     return models;
   };
@@ -971,8 +971,9 @@
                 n.loc_y,
                 n.loc_x)
             .then(function () {
-              SkeletonAnnotations.staticSelectNode(n.id);
-            });
+              return SkeletonAnnotations.staticSelectNode(n.id);
+            })
+            .catch(CATMAID.handleError);
         };
       }(this.currentSkeletonId);
 
@@ -1180,6 +1181,8 @@
 
   // Register widget with CATMAID
   CATMAID.registerWidget({
+    name: "Neuron Dendrogram",
+    description: "Visualize the topology of a neuron",
     key: "neuron-dendrogram",
     creator: NeuronDendrogram
   });

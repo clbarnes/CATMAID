@@ -1,11 +1,291 @@
 ## Under development
 
+
+### Notes
+
+- A virtualenv update is required.
+
+- This release adds optional statics summary tables, which can increase the
+  performance of project/user statistics significantly, but statistics will also
+  be correct without them. The additional table keeps aggregated information
+  about various user actions. To initialize this table, the following
+  manangement command has to be run after the migration:
+
+    ./manage.py catmaid_populate_summary_tables
+
+  To maintain good performance, this command has to be run regularly, e.g.
+  through a cron job or Celery every night. Because summary updates are
+  incremental by default, they don't take much time to update.
+
+- CATMAID's Docker images changed: The existing `catmaid/catmaid` image is now
+  only a base image that is used for a simple standalone demo image, available
+  as `catmaid/catmaid-standalone`. Additionally, the base image is used in a new
+  docker-compose setup, which can be used if persistent data is required. The
+  documentation has been updared with all the details.
+
+- The Docker default port is now 8000 for both regular setups and docker-compose
+  setups.
+
+- The data view "legacy project list" has been renamed to "simple project list".
+  It now supports separate project title and stack title filters, which can be
+  preconfigured using the data view config options "projectFilterTerm" and
+  "stackFilterTerm". For both simple terms and regular expressions can be used.
+  The filter input boxes can optionally be hidden by setting the "filter" config
+  property to false.
+
+- Running periodic tasks is now easier and a default setup for cleaning up
+  cropping data at 23:30 and update tracing project statistics at 23:45 every
+  night is now available. All it needs is to run a Celery worker and a Celery
+  beat scheduler. The documentation has more details.
+
+- The cropping output file file name prefix and file extension can now be
+  specified from settings.py. The defaults are:
+
+  CROPPING_OUTPUT_FILE_EXTENSION = "tiff"
+  CROPPING_OUTPUT_FILE_PREFIX = "crop_"
+
+
+### Features and enhancements
+
+Project/user statistics:
+
+- The widget should now be much faster.
+
+- Import actions are not counted anymore by default. The "Include imports"
+  checkbox can be used to change this.
+
+- State saving is now supported.
+
+
+Neuron history:
+
+- Events by different users are now collected in separate bouts to attribute
+  parallel user activity. To restore the previous behavior (users are ignored)
+  the "Merge parallel events" checkbox can be checked.
+
+- State saving is now supported
+
+- Individual neurons can be removed with the help of an "X" icon in the firs
+  column.
+
+- A "total time" column has been added, which aggregates time across all active
+  bouts formed by both tracing and review events. Since events are binnned in
+  bouts, the total time is not just the sum of both tracing time and review
+  time.
+
+
+Node filters:
+
+- A Reconstruction Sampler interval can now be used as a node filter. This
+  allows e.g. reviewing only an interval or look only at the connectivity of
+  the interval.
+
+
+Graph Widget:
+
+- Edge labels can now take different forms and can be configured in the
+  properties dialog. There are two new label options available: "Fractions of
+  outbound connections" and "Fractions of inbound connections". Instead of an
+  absolute number they display the relative fraction. This works for both
+  regular connections and connections involving groups.
+
+
+Reconstruction sampler:
+
+- Intervals for a particular interval length can now be previewed before
+  creating a new sampler. To do so, use the "Preview intervals" button in the
+  Sampler tab.
+
+- Interval reviews can now be initiated directly from the interval step table.
+  It will open a new review widget with pre-set interval filter and added
+  skeleton. The same is possible from the synapse workflow step using the
+  "Review interval" button.
+
+
+Layouts:
+
+- The Stack View section of the Settings Widget allows now the configuration of
+  a list of default layouts that can be applied to newly opened stacks and stack
+  groups. Layouts are useful for having a reasonable default configuration of a
+  newly opened CATMAID workspace including stacks and stack groups.
+
+- Layouts mimic nested function calls and are constructed from v(a,b) and h(a,b)
+  elements for vertical and horizontal splits, o(a) for optional windows, where
+  a and b can each be other v() or h() nodes, one of [XY, XZ, ZY, F1, X3D] or any
+  quoted widget handle (e.g. "neuron-search", see Ctrl + Space). At the moment,
+  in o(a), "a" can't be XY, XZ or ZY. To reference the 3D Viewer use X3D.
+
+- By default only one layout is available: organize XY, XZ and ZY in four
+  quadrants using one additional window (if non available the help page). This
+  is its specification: h(v(XY, XZ), v(ZY, o(F1))). With h() and v(), horizontal
+  and vertical splits are declared, respectively. With o(F1) a help window will
+  be opened as fourth window if not already another window exists.
+
+- Useful for organizing orthogonal views in a custom way and to create default
+  workspaces. For instance, to always open a Neuron Search widget right to the
+  a single XY view stack, the layout can be used: h(XY, "neuron-search").
+
+
+CATMAID extensions:
+
+- As well as supporting standalone 3rd party static files, CATMAID now supports
+  fully-featured extensions, which can include database models, API endpoints,
+  and tests as well as static files.
+
+- CATMAID extensions are Django apps which follow a particular layout, and can
+  be installed with `pip`
+
+- The goal is for CATMAID extensions to be reusable and interoperable
+  between versions and installations of CATMAID, reducing the need to fork it
+  and keep the fork updated in parallel.
+
+- More details can be found in the docs.
+
+
+Miscellaneous:
+
+- The Open Widget dialog now displays a table that includes more information on
+  widgets. Instead of the previously used auto-completion this table is now
+  filtered.
+
+- If multiple tile layers are used, the stack viewer layer settings (blue white
+  box in lower left corner) allow to set which stacks should be respected if
+  broken sections are skipped. This can be done through the "Skip broken
+  sections of stacks" drop-down menu. Whether layers added after the first layer
+  should be respected by default when checking for broken sections can be set in
+  the Settings Widget in the "Stack view" section.
+
+- The dialog to add a new annotation displays now the existing annotations as
+  well.
+
+- Tabbed windows: changing window aliases are now reflected in tab headers.
+
+- The performance of node creation and deletion operations has been improved by
+  preventing full node updates after these operations.
+
+- Widgets with state saving support now also support removing previously saved
+  states through a button in the widget controls available through the window
+  icon in the widget title bar.
+
+- The Selection Tool (the first icon in the top bar) has been removed, because
+  it didn't provide any functionality. It is replaced by an icon to show the
+  "Open Widget" dialog, which can otherwise be shown using Ctrl + Space.
+
+- When splitting a skeleton on a virtual node, the virtual node will now only be
+  instantiated if the user presses OK in the dialog, canceling won't cause a
+  change of the virtual node.
+
+- The default for hiding tile layers if the nearest section is broken (instead
+  of showing the next available) can now be configured from the Settings Widget
+  in its Stack View section.
+
+- `plotly.js`, a d3-based plotting library, is now available within CATMAID,
+  making it much easier to generate common plots.
+
+
+### Bug fixes
+
+- Review widget: moving in reverse direction from a virtual node doesn't show
+  error anymore.
+
+- Review widget: the Shift + Q key combination to select the next unreviewed
+  node in downstream direction is respected again.
+
+- Review widget: Shift + W and Shift + Q work now correctly if the first
+  unreviewed node is a virtual node.
+
+- Key combinations involving the Alt key were not respected on Mac OS. This is
+  fixed now.
+
+- Reconstruction sampler: the list of connectors in the selected interval of the
+  synapse workflow step is now complete when refreshed.
+
+- 3D viewer: the error shown when changing skeleton properties with an active
+  connector restriction is fixed.
+
+- The neuron history widget now calculates both tracing time and review time
+  correctly.
+
+- 'Peek skeleton' (P key) works again.
+
+- The Split Skeleton Dialog updates the embedded 3D view again after all
+  skeletons are loaded.
+
+- Former partner nodes of deleted connector nodes can now be deleted without an
+  additional tracing layer update.
+
+- The Skeleton Projection Layer can now use the skeleton source colors and other
+  colors source again.
+
+- The simple front end data view's project filter works again
+
+- Skeleton source subscriptions: opting in and out of applying color changes in
+  source skeletons to existing target skeletons works again.
+
+- Dragging nodes in stacks with smaller resolutions (larger nm/px) doesn't
+  require large drag distances anymore, before the move is registered.
+
+- Node selection works now reliably with orthogonal views, including using the
+  "G" key.
+
+
+## 2017.07.28
+
+Contributors: Chris Barnes, Albert Cardona, Tom Kazimiers, Daniel Witvliet
+
 ### Notes
 
 - Prepared statements can now also be used together with connection pooling.
 
+- A virtualenv update is required.
+
+- The following lines have to be removed from `settings.py`,
+
+  import djcelery
+  djcelery.setup_loader()
+  INSTALLED_APPs += ("kombu.transport.django")
+  BROKER_URL = 'django://'
+
+- Two new treenode and connector node providers have been added: postgis2dblurry
+  and postgis3dblurry. They works like the regular postgis2d and postgis3d node
+  providers except that they allow more false positives, because edges are only
+  tested for bounding box intersection with the query bounding box. Depending on
+  the dataset, this can help performance but might require a larger node limit.
 
 ### Features and enhancements
+
+Synapse Fractions:
+
+- New button "Append as group". Multiple neurons will be shown in a single column.
+
+- New UI functions to set the synapse confidence.
+
+- Default to Upstream (fractions for input neurons).
+
+- Shift-click to toggle selected state of partner neurons or groups, and then
+  push 'J' to create a new partner group.
+
+- X axis labels can now be rotated, from the Options tab.
+
+- Node filters can now be applied to filter valid connector links.
+
+
+3D Viewer:
+
+- New skeleton shading modes:
+  * "Axon and dendrite": like the coloring mode "Axon and dendrite", but using
+	  shading like in the "Split at active node" mode.
+  * "Single Strahler number": color branches of a specific Strahler number
+	  in full color, and darken everything else. The Strahler number is specified
+		in the tab named "Shading parameters".
+  * "Strahler threshold": color branches of a Strahler number equal or higher
+    than the number specifed in the Stahler number field ("Shading paramters"
+		tab) in full color, darken all others. When inverted, show in full color
+		branches with a Strahler number strictly lower than the specified one.
+
+- The Z plane display now supports stack viewer layers. If multiple layers are
+  shown in a stack viewer, its Z plane will render all visible layers on top of
+  each other.
 
 Review widget:
 
@@ -28,6 +308,68 @@ Node filters:
 
 - A Strahler number filter has been added to only show nodes with a Strahler
   value below/same as/above a user defined number.
+
+
+Neuron Search:
+
+- It is now possible to use the "not" operator with neuron name and annotation
+  search criteria.
+
+- Both neuron name and type columns can now be sorted.
+
+- Filters are now supported. Only neurons will be shown of which at least one
+  node is in the node filter result set.
+
+
+Neuron History:
+
+- This new widget can be opened using Ctrl+Space together with the key
+  "neuron-history" or through a button in the Neuron Navigator.
+
+- For all neurons added to this widget, time related information is presented.
+  Currently, the following is calculated: Tracing time, review time, cable
+  length before review, cable length after review, connectors before review and
+  connectors after review.
+
+- The components that contribute to the tracing time can be adjusted with the
+  "Tracing time" drop down menu.
+
+
+Reconstruction Sampler:
+
+- This new widget can be opened using Ctrl + Space and the keyword
+  "reconstruction-sampler". It allows to target reconstruction effort based on
+  the spatial sampling of a skeleton. This is mainly useful for large neurons
+  that can't be quickly traced to completion. The widget is organized as a
+  workflow that prevents skipping steps.
+
+- To keep track of reconstruction progress, a so called sampler is created
+  for a skeleton of interest. This skeleton is typically the backbone of a
+  larger neuron. The sampler keeps track of some global properties for the
+  sampling. Once created, a sampler can be "opened" either by clicking "Open" or
+  by double clicking the respective table row. Also note that with a sampler
+  attached to a skeleton, the skeleton can not be deleted. If a skeleton should
+  be deleted, delete its samplers first.
+
+- Once opened, a sampler allows creating so called sampler domains, which are
+  regions on the skeletons which should in principle be considered for sampling.
+  Topological and tag based definitions of sampler domains are possible. Created
+  samplers can be opened through a click on "Open" or a double click on the
+  table row.
+
+- Once opened, sampler domains can be further divided in so called sampler
+  intervals. To do so the "Create intervals" buttons has to be pressed. These
+  have initially all the same length (defined in sampler) and no branches.
+  Intervals are meant to picked at random through the respective button.
+
+- With an interval selected, the goal is now to reconstruct it to completion
+  with all branches and connectors. CATMAID will show a warning when moved out
+  of the interval. The workflow page will show both input and output connectors.
+
+- As soon as the interval is reconstructed completely, a synapse can be picked
+  at random from which the next backbone can be reconstructed. Once the backbone
+  is found and reconstructed, the sampling can start over. Alternatively,
+  another interval in the original skeleton can be selected at random.
 
 
 Miscellaneous:
@@ -55,6 +397,39 @@ Miscellaneous:
   the data, which currently triggers a mirror switch by default if some tile is
   not accessible.
 
+- The tracing layer is now faster with creating skeleton nodes, connectors and
+  partner nodes by avoiding unneeded node updates.
+
+- Export widget: exporting neurons as NRRD files is now supported. The NAT R
+  package is used for this. Check documentation for setup.
+
+- The tracing tool has now a button to refresh CATMAID's caches for neuron names
+  and annotations. This can be used to update neuron names with components that
+  were changed by other users. Additionally, such a cache update is performed
+  automatically once every hour.
+
+- URLs to a particular view work now also with a location and a skeleton ID only
+  rather than requiring a node ID always.
+
+- Using "Shift + x" and "Ctrl + x" will now activate a checkbox selection mode
+  and the cursor turns into a crosshair. In this mode one can draw a rectangle
+  everywhere on the screen and all checkboxes that are behind the rectangle will
+  be toggled using "Ctrl + x" (turned on if off and vise versa) or checked with
+  "Shift + x". Either releasing the drawing mouse click or a second "Shift + x"
+  or "Ctrl + x" will deactivate the tool again.
+
+- All skeleton source widgets (typically those with a skeleton source drop-down
+  menu) now support copy and paste of skeleton models. Pressing "Alt + Ctrl + c"
+  in an active widget will copy its skeletons (along with colors) into a
+  clipboard. Pressing "Alt + Ctrl + v" in another widget will then paste those
+  models into the now active widget.
+
+- When using the Z key to create new nodes, existing nodes are not as easily
+  selected from a distance anymore. Before, the radius around a click event was
+  too large and the closest node around the click was selected. Other nodes will
+  now only be selected if the mouse cursor is close to their circle graphic on
+  screen.
+
 
 ### Bug fixes
 
@@ -74,6 +449,33 @@ Miscellaneous:
 - Highlighted tags in the Neuron Dendrogram widget are now correctly displayed
   next to the nodes they belong to. Before, each tagged node had all selected
   tags shown next to it, regardless of whether it would be tagged with them.
+
+- 3D viewer: the textured Z section rendering in the 3D Viewer now respects the
+  mirror setting from the tile layer.
+
+- 3D viewer: a memory leak in displaying Z sections with images has been fixed.
+  This allows long continued Z section browsing without crashing.
+
+- 3D viewer: the accurateness of object picking on neurons and location picking
+  on z panes has been improved.
+
+- Cropping image data works again.
+
+- Setting a stack viewer offset won't cause an error anymore.
+
+- User interaction without a reachable server (e.g. due to a disconnected
+  network) doesn't lead to image and tracing data freezing anymore.
+
+- Pressing key combinations before the tracing layer has loaded is now handled
+  more gracefully (no error dialog).
+
+- 3D viewer: the active node split shading can now handle changed virtual nodes
+  to which it is lacking information and won't raise an error.
+
+- All newly opened widgets that support it, appear now in the "skeleton source"
+  drop-down menus of all other widgets from that moment on. This was a problem
+  mainly with Analyze Arbor, Measurements Table, Morphology Plot, Neuron
+  Dendrogrm and Treenode Table.
 
 
 ## 2017.05.17
@@ -216,7 +618,6 @@ Miscellaneous:
   in use.
 
 - Radius creation works now in orthogonal views as expected.
-
 
 ## 2017.04.20
 

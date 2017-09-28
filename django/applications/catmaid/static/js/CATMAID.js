@@ -1,71 +1,89 @@
 /* -*- mode: espresso; espresso-indent-level: 2; indent-tabs-mode: nil -*- */
 /* vim: set softtabstop=2 shiftwidth=2 tabstop=2 expandtab: */
-/* global
-  login
-*/
 
-/* It's very easy to accidentally leave in a console.log if you're working with
- * Firebug, but this will break CATMAID for some browsers.  If window.console
- * isn't defined, create a noop version of console.log: */
-if (!window.console) {
-  window.console = {};
-  window.console.log = function() {};
-}
+(function() {
 
+  "use strict";
 
-// Attach a general error handler
-window.onerror = function(msg, url, lineno, colno, err)
-{
-  var userAgent = navigator ? navigator.userAgent : 'N/A';
+  function handleUnhandledError(err, detail) {
+    console.group("Undhandled CATMAID error");
+    // Log the error detail to the console
+    console.log(detail);
 
-  var info = 'An error occured in CATMAID and the current action can\'t be ' +
-      'completed. You can try to reload the widget or tool you just used.';
-  var detail = 'Error: ' + msg + ' URL: ' + url + ' Line: ' + lineno +
-      ' Column: ' + colno + ' User agent: ' + userAgent + ' Stacktrace: ' +
-      (err ? err.stack : 'N/A');
-
-  // Log the error detail to the console
-  console.log(detail);
-
-  // Log the error in the backend, bypass the request queue and make a direct
-  // AJAX call through jQuery.
-  $.ajax({
-    'url': django_url + 'log/error',
-    'type': 'POST',
-    'data': {
-      'msg': detail,
+    // Log the error object, if available
+    if (err) {
+      console.log('Error object:');
+      console.log(err);
+    } else {
+      console.log('No error object was provided');
     }
+
+    console.groupEnd();
+
+    // Log the error in the backend, bypass the request queue and make a direct
+    // AJAX call through jQuery.
+    $.ajax({
+      'url': django_url + 'log/error',
+      'type': 'POST',
+      'data': {
+        'msg': detail,
+      }
+    });
+
+    var generalErrorMessage = 'An error occured in CATMAID and the current ' +
+        'action can\'t be completed. You can try to reload the widget or ' +
+        'tool you just used.';
+
+    // Use alert() to inform the user, if the error function isn't available for
+    // some reason
+    if (CATMAID && CATMAID.error) {
+      CATMAID.error(generalErrorMessage, detail);
+    } else {
+      alert(generalErrorMessage + ' Detail: ' + detail);
+    }
+  }
+
+  // Attach a general error handler
+  window.onerror = function(msg, url, lineno, colno, err) {
+    var userAgent = navigator ? navigator.userAgent : 'N/A';
+    var detail = 'Error: ' + msg + ' URL: ' + url + ' Line: ' + lineno +
+        ' Column: ' + colno + ' User agent: ' + userAgent + ' Stacktrace: ' +
+        (err ? err.stack : 'N/A');
+
+    handleUnhandledError(err, detail);
+
+    // Return true to indicate the exception is handled and doesn't need to be
+    // shown to the user.
+    return true;
+  };
+
+  // Catch unhandled rejected promises. At the time of writing only Chromium
+  // based browsers (like Chrome) have native suport for this.
+  window.addEventListener('unhandledrejection', function handleRejection(event) {
+    var reason = event.reason || {};
+    var userAgent = navigator ? navigator.userAgent : 'N/A';
+    var detail = 'Error: ' + reason.message + ' User agent: ' + userAgent +
+        ' Stacktrace: ' + reason.stack;
+
+    // We take care of the logging ourselves
+    event.preventDefault();
+
+    handleUnhandledError(event.promise, detail);
+
+    return true;
   });
 
-  // Log the error object, if available
-  if (err) {
-    console.log('Error object:');
-    console.log(err);
-  } else {
-    console.log('No error object was provided');
-  }
+  // Let user cancel going back in browser history
+  window.onbeforeunload = function() {
+    return "CATMAID's window arrangement and content won't be saved if you continue.";
+  };
 
-  // Use alert() to inform the user, if the error function isn't available for
-  // some reason
-  if (CATMAID && CATMAID.error) {
-    CATMAID.error(info, detail);
-  } else {
-    alert(info + ' Detail: ' + detail);
-  }
+})();
 
-  // Return true to indicate the exception is handled and doesn't need to be
-  // shown to the user.
-  return true;
-};
+(function(CATMAID) {
 
-// Let user cancel going back in browser history
-window.onbeforeunload = function() {
-  return "CATMAID's window arrangement and content won't be saved if you continue.";
-};
+  "use strict";
 
-
-(function(CATMAID)
- {
   CATMAID.MAX_WEBGL_CONTEXTS = 16;  // may change and/or be browser-dependent
 
   // The UI singleton
@@ -239,6 +257,8 @@ window.onbeforeunload = function() {
       }
     } else if (error instanceof Error) {
       CATMAID.error(error.message, error.stack);
+    } else if (error instanceof CATMAID.Warning) {
+      CATMAID.warn(error.message);
     } else {
       CATMAID.error(error);
     }

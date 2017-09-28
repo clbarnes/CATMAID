@@ -27,6 +27,7 @@
     this.useSourceColors = false;
     this.selectionBasedSource = true;
     this.skeletonSource = new CATMAID.BasicSkeletonSource('Skeleton projection layer', {
+      owner: this,
       handleAddedModels: this.update.bind(this),
       handleRemovedModels: this.update.bind(this),
       handleChangedModels: this._updateModels.bind(this),
@@ -381,11 +382,15 @@
   SkeletonProjectionLayer.prototype.clear = function() {
     if (this.graphics) {
       this.graphics.containers.nodes.children.forEach(function (child) {
-        child.destroy();
+        if (child) {
+          child.destroy();
+        }
       });
       this.graphics.containers.nodes.removeChildren();
       this.graphics.containers.lines.children.forEach(function (child) {
-        child.destroy();
+        if (child) {
+          child.destroy();
+        }
       });
       this.graphics.containers.lines.removeChildren();
     }
@@ -474,7 +479,7 @@
       upstream = upstream.reroot(parentId);
 
       var upstreamColor = this.options.preferSourceColor && skeletonModel ?
-        skeletonModel.color.getStyle() : this.options.upstreamColor;
+        skeletonModel.color.getHex() : this.options.upstreamColor;
 
       // Update render options with upstream color
       renderOptions.color = material.color(this, upstreamColor);

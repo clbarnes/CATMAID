@@ -152,7 +152,7 @@
   /**
    * Return a promise that will resolve when all data dependencies for the
    * passed in sets of skeletons and filter rules. This ignores per-skeleton
-   * consraints at the moment.
+   * constraints at the moment.
    */
   function prepareFilterInput(skeletonIds, rules, input) {
     var neededInput = new Set();
@@ -171,7 +171,9 @@
     var needsArbor = neededInput.has("arbor"),
         needsPartners = neededInput.has("partners"),
         needsTags = neededInput.has("tags"),
-        needsTime = neededInput.has("time");
+        needsTime = neededInput.has("time"),
+        needsIntervals = neededInput.has("intervals");
+
     if (needsArbor || needsTags || needsPartners) {
       if (input.skeletons === undefined) { input.skeletons = {}; }
       var fetchSkeletons = CATMAID.SkeletonFilter.fetchArbors(skeletonIds,
@@ -187,9 +189,52 @@
         if (volumeId !== undefined) {
           volumeIds.add(volumeId);
         }
-        volumeIds = Array.from(volumeIds);
       }
+      volumeIds = Array.from(volumeIds);
       prepareActions.push(CATMAID.SkeletonFilter.loadVolumes(volumeIds, input.volumes));
+    }
+
+    if (needsIntervals) {
+      if (input.intervals === undefined) { input.intervals = []; }
+      if (input.intervalIndex === undefined) { input.intervalIndex = {}; }
+      var intervalRetrieval = Promise.resolve();
+      var nRules = rules.length;
+      for (var i=0; i<nRules; ++i) {
+        var intervalId = rules[i].options['intervalId'];
+        if (intervalId !== undefined) {
+          intervalRetrieval = intervalRetrieval
+            .then(function() {
+              return CATMAID.fetch(project.id  + '/samplers/domains/intervals/' +
+                  intervalId + '/details');
+            })
+            .then(function(interval) {
+              return CATMAID.fetch(project.id + '/samplers/domains/' +
+                  interval.domain_id + '/intervals');
+            })
+            .then(function(intervals) {
+              var intervalIndex = input.intervalIndex;
+              for (var i=0; i<intervals.length; ++i) {
+                var interval = intervals[i];
+                intervalIndex[interval.id] = interval;
+              }
+              if (nRules === 1) {
+                input.intervals = intervals;
+              }
+            });
+
+        }
+      }
+      if (nRules > 1) {
+        intervalRetrieval = intervalRetrieval
+          .then(function() {
+            if (input.intervals) {
+              input.intervals = input.intervals.keys().map(function(intervalId) {
+                return this[intervalId];
+              }, input.intervals);
+            }
+          });
+      }
+      prepareActions.push(intervalRetrieval);
     }
 
     return Promise.all(prepareActions)
@@ -205,6 +250,7 @@
     // strict left-associative combination is used.
     var nodeCollection = {};
     var radiiCollection = {};
+    var skeletonCollection = new Set();
     var nNodes = 0;
     if (mapResultNode === undefined) {
       mapResultNode = function() {
@@ -237,10 +283,26 @@
       nNodes += count;
     }).bind(nodeCollection);
 
+    var mergeSkeletonCollection = (function(other, mergeMode) {
+      if (CATMAID.UNION === mergeMode) {
+        for (var skeletonId of other) {
+          this.add(skeletonId);
+        }
+      } else if (CATMAID.INTERSECTION === mergeMode) {
+        for (var skeletonId of this) {
+          if (!other.has(skeletonId)) {
+            this.delete(skeletonId);
+          }
+        }
+      } else {
+        throw new CATMAID.ValueError("Unknown merge mode: " + mergeMode);
+      }
+    }).bind(skeletonCollection);
+
     // Get final set of points by going through all rules and apply them
     // either to all skeletons or a selected sub-set. Results of individual
     // rules are OR-combined.
-    rules.forEach(function(rule) {
+    rules.forEach(function(rule, i) {
       // Pick source skeleton(s). If a rule requests to be only applied for
       // a particular skeleton, this working set will be limited to this
       // skeleton only.
@@ -252,6 +314,12 @@
         sourceSkeletons = skeletonIndex;
       }
 
+      // Ignore the merge mode for the first rule, because it can't be merge
+      // with anything.
+      var mergeMode = i === 0 ? CATMAID.UNION : rule.mergeMode;
+
+      var allowedSkeletons = new Set();
+
       // Apply rules and get back a set of valid nodes for each skeleton
       Object.keys(sourceSkeletons).forEach(function(skid) {
         // Get valid point list from this skeleton with the current filter
@@ -260,16 +328,21 @@
             inputMap, rule.options);
         // Merge all point sets for this rule. How this is done exactly (i.e.
         // OR or AND) is configured separately.
-        if (nodeCollection) {
-          mergeNodeCollection(skid, nodeCollection, rule.mergeMode,  mapResultNode);
+        if (nodeCollection && !CATMAID.tools.isEmpty(nodeCollection)) {
+          mergeNodeCollection(skid, nodeCollection, mergeMode, mapResultNode);
+          // Remember this skeleton as potentially valid
+          allowedSkeletons.add(parseInt(skid, 10));
         }
       });
+
+      mergeSkeletonCollection(allowedSkeletons, mergeMode);
     });
 
     return {
       nodes: nodeCollection,
       nNodes: nNodes,
-      input: inputMap
+      input: inputMap,
+      skeletons: skeletonCollection
     };
   }
 
@@ -717,6 +790,40 @@
         }
         return includedNodes;
       }
+    },
+    'sampler-interval': {
+      name: "Sampler interval",
+      prepare: ['arbor', 'intervals'],
+      filter: function(skeletonId, neuron, input, options) {
+        var skeleton = input.skeletons[skeletonId];
+        var arbor = skeleton.arbor;
+        var intervalId = options.intervalId;
+        var interval = input.intervalIndex[intervalId];
+        var otherIntervalBoundaries = input.intervals.reduce(
+            function(o, testInterval) {
+              if (intervalId !== testInterval.id &&
+                  interval.start_node_id !== testInterval.end_node_id &&
+                  interval.end_node_id !== testInterval.start_node_id) {
+                o.add(testInterval.start_node_id);
+                o.add(testInterval.end_node_id);
+              }
+              return o;
+            }, new Set());
+
+        try {
+          var intervalNodes = CATMAID.Sampling.getIntervalNodes(arbor,
+            interval.start_node_id, interval.end_node_id,
+            otherIntervalBoundaries);
+
+          var includedNodes = {};
+          for (var nodeId of intervalNodes) {
+            includedNodes[nodeId] = true;
+          }
+          return includedNodes;
+        } catch (error) {
+          return {};
+        }
+      }
     }
   };
 
@@ -1005,6 +1112,17 @@
           });
       $(container).append($tag);
     },
+    'sampler-interval': function(container, options) {
+      var intervalId = document.createElement('input');
+      intervalId.setAttribute('type', 'number');
+      intervalId.onchange = function() {
+        options.intervalId = parseInt(this.value);
+      };
+      var intervalIdLabel = document.createElement('label');
+      intervalIdLabel.appendChild(document.createTextNode('Interval ID'));
+      intervalIdLabel.appendChild(intervalId);
+      container.appendChild(intervalIdLabel);
+    }
   };
 
   // A default no-op filter rule that takes all nodes.

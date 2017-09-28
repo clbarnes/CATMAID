@@ -46,9 +46,30 @@ var WindowMaker = new function()
       try {
         return storeWidgetState(widget, widgetStateManager);
       } catch (e) {
-        CATMAID.warn("Coudldn't save widget state");
+        CATMAID.warn("Coudln't save widget state");
         return false;
       }
+    }
+  };
+
+  /**
+   * Clear the stored state of a widget if there is a state manager available
+   * for it.
+   */
+  CATMAID.clearSavedWidgetState = function(widget) {
+    var stateManager = stateManagers.get(widget.constructor);
+    if (stateManager) {
+      try {
+        var key = windowManagerStoragePrefix + stateManager.key;
+        localStorage.removeItem(key);
+        return true;
+      } catch (e) {
+        CATMAID.warn("Coudln't save widget state");
+        return false;
+      }
+    } else {
+      CATMAID.warn("No state manager found");
+      return false;
     }
   };
 
@@ -257,7 +278,7 @@ var WindowMaker = new function()
 
     // Widgets can announce they have filtering support
     if (config.filter) {
-      DOM.addFiltereControlsToggle(win, 'Filter: ' +
+      DOM.addFilterControlsToggle(win, 'Filter: ' +
           instance.getName(), config.filter);
     }
 
@@ -345,7 +366,7 @@ var WindowMaker = new function()
     var bar = document.createElement( "div" );
     bar.id = "3d_viewer_buttons";
     bar.setAttribute('class', 'buttonpanel');
-    DOM.addFiltereControlsToggle(win, 'Filter: ' +
+    DOM.addFilterControlsToggle(win, 'Filter: ' +
         WA.getName(), {
           rules: WA.filterRules,
           update: WA.updateFilter.bind(WA)
@@ -471,6 +492,7 @@ var WindowMaker = new function()
      ['near_active_node', 'Near active node'],
      ['near_active_node_z_project', 'Near active node (Z only)'],
      ['near_active_node_z_camera', 'Near active node (camera plane)'],
+     ['axon-and-dendrite', 'Axon and dendrite'],
      ['synapse-free', 'Synapse-free chunks'],
      ['downstream_amount', 'Downstream cable'],
      ['betweenness_centrality', 'Betweenness centrality'],
@@ -482,6 +504,8 @@ var WindowMaker = new function()
      ['distance_to_root', 'Distance to root'],
      ['partitions', 'Principal branch length'],
      ['strahler', 'Strahler analysis'],
+     ['single-strahler-number', 'Single Strahler number'],
+     ['strahler-threshold', 'Strahler threshold'],
      ['downstream-of-tag', 'Downstream of tag'],
      ['sampler-domains', 'Reconstrucion sampler domains'],
      ['sampler-intervals', 'Reconstrucion sampler intervals']
@@ -830,7 +854,7 @@ var WindowMaker = new function()
             WA.updateActiveNodeNeighborhoodRadius(this.value); }, 6],
           ['Min. synapse-free cable', o.min_synapse_free_cable, ' nm', function() {
             WA.updateShadingParameter('min_synapse_free_cable', this.value, 'synapse-free'); }, 6],
-          ['Strahler number', o.strahler_cut, '', function() { WA.updateShadingParameter('strahler_cut', this.value, 'dendritic-backbone'); }, 4],
+          ['Strahler number', o.strahler_cut, '', function() { WA.updateShadingParameter('strahler_cut', this.value, ['dendritic-backbone', 'single-strahler-number', 'strahler-threshold']); }, 4],
           ['Tag (regex):', o.tag_regex, '', function() { WA.updateShadingParameter('tag_regex', this.value, 'downstream-of-tag'); }, 4]
         ]);
 
@@ -1240,8 +1264,6 @@ var WindowMaker = new function()
     // available vertical space (instead of 50%).
     win.getParent().changeHeight(Math.abs(win.getHeight() * 0.5));
 
-    CATMAID.skeletonListSources.updateGUI();
-
     // Now that a Selection Table exists, have the 3D viewer subscribe to it and
     // make it ignore local models. Don't make it selection based, to not reload
     // skeletons on visibility changes.
@@ -1437,13 +1459,11 @@ var WindowMaker = new function()
 
     GG.init();
 
-    CATMAID.skeletonListSources.updateGUI();
-
     return {window: win, widget: GG};
   };
 
   var createConnectivityGraphPlot = function(instance) {
-    var GP = instance ? instance : new ConnectivityGraphPlot();
+    var GP = instance ? instance : new CATMAID.ConnectivityGraphPlot();
 
     var win = new CMWWindow(GP.getName());
     var content = win.getFrame();
@@ -1636,8 +1656,6 @@ var WindowMaker = new function()
     // the created container.
     NN.init_ui(container, new_nn_instance === undefined);
 
-    CATMAID.skeletonListSources.updateGUI();
-
     return {window: win, widget: NN};
   };
 
@@ -1657,14 +1675,47 @@ var WindowMaker = new function()
   };
 
   var creators = {
-    "keyboard-shortcuts": createKeyboardShortcutsWindow,
-    "3d-webgl-view": create3dWebGLWindow,
-    "graph-widget": createGraphWindow,
-    "connectivity-graph-plot": createConnectivityGraphPlot,
-    "ontology-search": createOntologySearchWidget,
-    "neuron-navigator": createNeuronNavigatorWindow,
-    "connectivity-matrix": createConnectivityMatrixWindow,
-    "html": createHtmlWindow,
+    "keyboard-shortcuts": {
+      name: 'Keyboard Shortcuts',
+      description: 'A tool specific list of keyboard shortcuts',
+      init: createKeyboardShortcutsWindow
+    },
+    "3d-webgl-view": {
+      name: '3D Viewer',
+      description: 'Visualize neurons, synapses and image data in 3D',
+      init: create3dWebGLWindow
+    },
+    "graph-widget": {
+      name: 'Graph Widget',
+      description: 'Display and explore connectivity graphs',
+      init: createGraphWindow
+    },
+    "connectivity-graph-plot": {
+      name: 'Graph Plot',
+      description: 'Plot',
+      init: createConnectivityGraphPlot
+    },
+    "ontology-search": {
+      name: 'Ontology Search',
+      description: 'Search for elements of the symantic space',
+      init: createOntologySearchWidget
+    },
+    "neuron-navigator": {
+      name: 'Neuron Navigator',
+      description: 'Traverse and constrain neuron, user and annotation networks',
+      init: createNeuronNavigatorWindow
+    },
+    "connectivity-matrix": {
+      name: 'Connectivity Matrix',
+      description: 'Aggregate partner connections and display them in a matrix',
+      init: createConnectivityMatrixWindow
+    },
+    "html": {
+      name: 'HTML Widget',
+      description: 'A generic HTML widget',
+      init: createHtmlWindow,
+      hidden: true,
+    },
   };
 
   /** If the window for the given name is already showing, just focus it.
@@ -1681,7 +1732,7 @@ var WindowMaker = new function()
           widget: instances.get(win)
         };
       } else {
-        var handles = creators[name](params);
+        var handles = creators[name].init(params);
         windows.set(name, new Map([[handles.window, handles.widget]]));
         return handles;
       }
@@ -1704,7 +1755,7 @@ var WindowMaker = new function()
         var instances = windows.get(name);
         return new Map(instances);
       } else if (create) {
-        var handles = creators[name](params);
+        var handles = creators[name].init(params);
         handles = new Map([[handles.window, handles.widget]]);
         windows.set(name, handles);
         return new Map(handles);
@@ -1721,7 +1772,7 @@ var WindowMaker = new function()
   this.create = function(name, init_params) {
     if (creators.hasOwnProperty(name)) {
       try {
-        var handles = creators[name](init_params);
+        var handles = creators[name].init(init_params);
         if (windows.has(name)) {
           windows.get(name).set(handles.window, handles.widget);
         } else {
@@ -1774,7 +1825,7 @@ var WindowMaker = new function()
   /**
    * Allow new widgets to register with a window maker.
    */
-  this.registerWidget = function(key, creator, replace, stateManager) {
+  this.registerWidget = function(key, creator, replace, stateManager, options) {
     if (key in creators && !replace) {
       throw new CATMAID.ValueError("A widget with the following key is " +
           "already registered: " + key);
@@ -1787,9 +1838,13 @@ var WindowMaker = new function()
       saveStateManager(creator, key, stateManager);
     }
 
-    creators[key] = function(options, isInstance) {
-      instance = isInstance ? options : new creator(options);
-      return createWidget(instance);
+    creators[key] = {
+      init: function(options, isInstance) {
+        instance = isInstance ? options : new creator(options);
+        return createWidget(instance);
+      },
+      name: options.name || key,
+      description: options.description || ''
     };
   };
 
@@ -1817,6 +1872,13 @@ var WindowMaker = new function()
       return Object.keys(creators);
   };
 
+  /**
+   * Get a copy of the descriptions of a registered widget.
+   */
+  this.getWidgetDescription = function(widgetKey) {
+     return $.extend(true, {}, creators[widgetKey]);
+  };
+
 }();
 
 
@@ -1831,7 +1893,7 @@ var WindowMaker = new function()
    * existing widgets.
    */
   CATMAID.registerWidget = function(options) {
-    WindowMaker.registerWidget(options.key, options.creator, options.replace, options.state);
+    WindowMaker.registerWidget(options.key, options.creator, options.replace, options.state, options);
   };
 
   /**

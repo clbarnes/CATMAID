@@ -14,7 +14,7 @@
   $.extend(NotificationsTable.prototype, new InstanceRegistry());
 
   NotificationsTable.prototype.getName = function() {
-    return "Notificationo Table " + this.widgetID;
+    return "Notification Table " + this.widgetID;
   };
 
   NotificationsTable.prototype.destroy = function() {
@@ -194,8 +194,9 @@
           if (action === 'show') {
             SkeletonAnnotations.staticMoveTo(row_data[6], row_data[5], row_data[4])
                 .then(function () {
-                  SkeletonAnnotations.staticSelectNode(row_data[7]);
-                });
+                  return SkeletonAnnotations.staticSelectNode(row_data[7]);
+                })
+                .catch(CATMAID.handleError);
           }
           else if (action === 'approve') {
             self.approve(row_data[0]);
@@ -247,6 +248,8 @@
 
   // Register widget with CATMAID
   CATMAID.registerWidget({
+    name: "Notification Table",
+    description: "List your notificiations",
     key: 'notifications',
     creator: NotificationsTable
   });

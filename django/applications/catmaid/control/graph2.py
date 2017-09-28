@@ -13,7 +13,7 @@ from numpy import subtract
 from numpy.linalg import norm
 
 from django.db import connection
-from django.http import HttpResponse
+from django.http import HttpResponse, JsonResponse
 
 from rest_framework.decorators import api_view
 
@@ -25,17 +25,18 @@ from catmaid.control.synapseclustering import tree_max_density
 
 from six.moves import range, zip as izip
 
+def make_new_synapse_count_array():
+    return [0, 0, 0, 0, 0]
 
-def basic_graph(project_id, skeleton_ids):
-    def newSynapseCounts():
-        return [0, 0, 0, 0, 0]
+def basic_graph(project_id, skeleton_ids, relations=None):
 
     if not skeleton_ids:
         raise ValueError("No skeleton IDs provided")
 
     cursor = connection.cursor()
 
-    relations = get_relation_to_id_map(project_id, ('presynaptic_to', 'postsynaptic_to'), cursor)
+    if not relations:
+        relations = get_relation_to_id_map(project_id, ('presynaptic_to', 'postsynaptic_to'), cursor)
     preID, postID = relations['presynaptic_to'], relations['postsynaptic_to']
 
     cursor.execute('''
@@ -51,7 +52,7 @@ def basic_graph(project_id, skeleton_ids):
            'pre': preID,
            'post': postID})
 
-    edges = defaultdict(partial(defaultdict, newSynapseCounts))
+    edges = defaultdict(partial(defaultdict, make_new_synapse_count_array))
     for row in cursor.fetchall():
         edges[row[0]][row[1]][row[2] - 1] += 1
 
@@ -80,18 +81,17 @@ def basic_graph(project_id, skeleton_ids):
     """
 
 
-def confidence_split_graph(project_id, skeleton_ids, confidence_threshold):
+def confidence_split_graph(project_id, skeleton_ids, confidence_threshold,
+        relations=None):
     """ Assumes 0 < confidence_threshold <= 5. """
-    def newSynapseCounts():
-        return [0, 0, 0, 0, 0]
-
     if not skeleton_ids:
         raise ValueError("No skeleton IDs provided")
 
     cursor = connection.cursor()
     skids = ",".join(str(int(skid)) for skid in skeleton_ids)
 
-    relations = get_relation_to_id_map(project_id, ('presynaptic_to', 'postsynaptic_to'), cursor)
+    if not relations:
+        relations = get_relation_to_id_map(project_id, ('presynaptic_to', 'postsynaptic_to'), cursor)
     preID, postID = relations['presynaptic_to'], relations['postsynaptic_to']
 
     # Fetch synapses of all skeletons
@@ -145,7 +145,7 @@ def confidence_split_graph(project_id, skeleton_ids, confidence_threshold):
         nodeIDs.extend(split_by_confidence(current_skid, tree, stc[current_skid], connectors))
 
     # Create the edges of the graph from the connectors, which was populated as a side effect of 'split_by_confidence'
-    edges = defaultdict(partial(defaultdict, newSynapseCounts)) # pre vs post vs count
+    edges = defaultdict(partial(defaultdict, make_new_synapse_count_array)) # pre vs post vs count
     for c in six.itervalues(connectors):
         for pre in c[preID]:
             for post in c[postID]:
@@ -155,11 +155,9 @@ def confidence_split_graph(project_id, skeleton_ids, confidence_threshold):
             'edges': [(pre, post, count) for pre, edge in six.iteritems(edges) for post, count in six.iteritems(edge)]}
 
 
-def dual_split_graph(project_id, skeleton_ids, confidence_threshold, bandwidth, expand):
+def dual_split_graph(project_id, skeleton_ids, confidence_threshold, bandwidth,
+        expand, relations=None):
     """ Assumes bandwidth > 0 and some skeleton_id in expand. """
-    def newSynapseCounts():
-        return [0, 0, 0, 0, 0]
-
     cursor = connection.cursor()
     skeleton_ids = set(skeleton_ids)
     expand = set(expand)
@@ -171,7 +169,8 @@ def dual_split_graph(project_id, skeleton_ids, confidence_threshold, bandwidth, 
 
     skids = ",".join(str(int(skid)) for skid in skeleton_ids)
 
-    relations = get_relation_to_id_map(project_id, ('presynaptic_to', 'postsynaptic_to'), cursor)
+    if not relations:
+        relations = get_relation_to_id_map(project_id, ('presynaptic_to', 'postsynaptic_to'), cursor)
     preID, postID = relations['presynaptic_to'], relations['postsynaptic_to']
 
     # Fetch synapses of all skeletons
@@ -283,7 +282,7 @@ def dual_split_graph(project_id, skeleton_ids, confidence_threshold, bandwidth, 
 
 
     # Create the edges of the graph
-    edges = defaultdict(partial(defaultdict, newSynapseCounts)) # pre vs post vs count
+    edges = defaultdict(partial(defaultdict, make_new_synapse_count_array)) # pre vs post vs count
     for c in six.itervalues(connectors):
         for pre in c[preID]:
             for post in c[postID]:
@@ -392,18 +391,62 @@ def split_by_both(skeleton_id, digraph, locations, bandwidth, cs, connectors, in
     return nodes, branch_nodes
 
 
-def _skeleton_graph(project_id, skeleton_ids, confidence_threshold, bandwidth, expand, compute_risk, cable_spread, path_confluence):
+def _skeleton_graph(project_id, skeleton_ids, confidence_threshold, bandwidth,
+        expand, compute_risk, cable_spread, path_confluence,
+        with_overall_counts=False, relation_map=None):
     if not expand:
         # Prevent expensive operations that will do nothing
         bandwidth = 0
 
-    if 0 == confidence_threshold and 0 == bandwidth:
-        return basic_graph(project_id, skeleton_ids)
+    cursor = connection.cursor()
+    relation_map = get_relation_to_id_map(project_id,
+            ('presynaptic_to', 'postsynaptic_to'), cursor)
 
     if 0 == bandwidth:
-        return confidence_split_graph(project_id, skeleton_ids, confidence_threshold)
+        if 0 == confidence_threshold:
+            graph = basic_graph(project_id, skeleton_ids, relation_map)
+        else:
+            graph = confidence_split_graph(project_id, skeleton_ids,
+                    confidence_threshold, relation_map)
+    else:
+        graph = dual_split_graph(project_id, skeleton_ids, confidence_threshold,
+                bandwidth, expand, relation_map)
 
-    return dual_split_graph(project_id, skeleton_ids, confidence_threshold, bandwidth, expand)
+    if with_overall_counts:
+        preId = relation_map['presynaptic_to']
+        postId = relation_map['postsynaptic_to']
+        query_params = list(skeleton_ids) + [preId, postId, preId, postId]
+
+        skeleton_id_template = ','.join('(%s)' for _ in skeleton_ids)
+        cursor.execute('''
+        SELECT tc1.skeleton_id, tc2.skeleton_id,
+            tc1.relation_id, tc2.relation_id,
+            LEAST(tc1.confidence, tc2.confidence)
+        FROM treenode_connector tc1
+        JOIN (VALUES {}) skeleton(id)
+            ON tc1.skeleton_id = skeleton.id
+        JOIN treenode_connector tc2
+            ON tc1.connector_id = tc2.connector_id
+        WHERE tc1.id != tc2.id
+            AND tc1.relation_id IN (%s, %s)
+            AND tc2.relation_id IN (%s, %s)
+        '''.format(skeleton_id_template), query_params)
+
+        query_skeleton_ids = set(skeleton_ids)
+        overall_counts = defaultdict(partial(defaultdict, make_new_synapse_count_array))
+        # Iterate through each pre/post connection
+        for skid1, skid2, rel1, rel2, conf in cursor.fetchall():
+            # Increment number of links to/from skid1 with relation rel1.
+            overall_counts[skid1][rel1][conf - 1] += 1
+
+        # Attach counts and a map of relation names to their IDs.
+        graph['overall_counts'] = overall_counts
+        graph['relation_map'] = {
+            'presynaptic_to': preId,
+            'postsynaptic_to': postId
+        }
+
+    return graph
 
 
 @api_view(['POST'])
@@ -518,6 +561,11 @@ def skeleton_graph(request, project_id=None):
     cable_spread = float(request.POST.get('cable_spread', 2500)) # in nanometers
     path_confluence = int(request.POST.get('path_confluence', 10)) # a count
     expand = set(int(v) for k,v in six.iteritems(request.POST) if k.startswith('expand['))
+    with_overall_counts = request.POST.get('with_overall_counts', 'false') == 'true'
 
-    return HttpResponse(json.dumps(_skeleton_graph(project_id, skeleton_ids, confidence_threshold, bandwidth, expand, compute_risk, cable_spread, path_confluence)))
+    graph = _skeleton_graph(project_id, skeleton_ids,
+        confidence_threshold, bandwidth, expand, compute_risk, cable_spread,
+        path_confluence, with_overall_counts)
+
+    return JsonResponse(graph)
 

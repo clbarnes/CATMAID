@@ -152,13 +152,19 @@
     };
   };
 
+  var toPaddedString = function(value) {
+    return (value < 10 ? '0' : '') + value;
+  };
+
   var formatDate = function(date) {
+    let month = date.getUTCMonth() + 1;
+    let day = date.getUTCDate();
     return date.getUTCFullYear() + '-' +
-        date.getUTCMonth() + '-' +
-        date.getUTCDay() + ' ' +
-        date.getUTCHours() + ':' +
-        date.getUTCMinutes() + ':' +
-        date.getUTCSeconds();
+        toPaddedString(date.getUTCMonth() + 1) + '-' +
+        toPaddedString(date.getUTCDate()) + ' ' +
+        toPaddedString(date.getUTCHours()) + ':' +
+        toPaddedString(date.getUTCMinutes()) + ':' +
+        toPaddedString(date.getUTCSeconds());
   };
 
   /**
@@ -218,6 +224,13 @@
       },
       {
         type: 'button',
+        label: 'Preview intervals',
+        onclick: function() {
+          self.previewIntervals(widget);
+        }
+      },
+      {
+        type: 'button',
         label: 'New sampler for active backbone',
         onclick: function() {
           self.createNewSampler(widget);
@@ -236,14 +249,15 @@
   };
 
   var deleteSampler = function(samplerId) {
-    if (confirm("Do you really want to delete this sampler and all associated data")) {
+    if (confirm("Do you really want to delete sampler " + samplerId +
+        " and all associated domains and intervals")) {
       return CATMAID.fetch(project.id + "/samplers/" + samplerId + "/delete", "POST")
         .then(function(response) {
           CATMAID.msg("Success", "Deleted sampler " + response.deleted_sampler_id);
         })
         .catch(CATMAID.handleError);
     }
-    return Promise.reject("Canceled by user");
+    return Promise.reject(new CATMAID.Warning("Canceled by user"));
   };
 
   BackboneWorkflowStep.prototype.updateContent = function(content, widget) {
@@ -412,7 +426,8 @@
       deleteSampler(samplerId)
           .then(function() {
             datatable.ajax.reload();
-          });
+          })
+          .catch(CATMAID.handleError);
     }).on('click', 'a[data-action=next]', function() {
       var table = $(this).closest('table');
       var tr = $(this).closest('tr');
@@ -423,6 +438,111 @@
       widget.workflow.advance();
       widget.update();
     });
+  };
+
+  /**
+   * Show a 3D confirmation dialog that will show the current interval setting
+   * applied to the active neuron (if any).
+   */
+  BackboneWorkflowStep.prototype.previewIntervals = function(widget) {
+    var skeletonId = widget.state['skeletonId'];
+    if (!skeletonId) {
+      CATMAID.warn("Please select a skeleton first");
+      return;
+    }
+    var intervalLength = widget.state['intervalLength'];
+    if (!intervalLength) {
+      CATMAID.warn("No valid interval length found");
+      return;
+    }
+
+    var arbor = widget.state['arbor'];
+    // Get arbor if not already cached
+    var prepare;
+    if (arbor) {
+      prepare = Promise.resolve();
+    } else {
+      prepare = CATMAID.Sampling.getArbor(skeletonId)
+        .then(function(result) {
+          arbor = result;
+          widget.state['arbor'] = result;
+        });
+    }
+
+    prepare
+      .then(function() {
+        return new Promise(function(resolve, reject) {
+          // Create a a fake sampler with a fake domain that covers the whole
+          // skeleton.
+          var fakeDomain = {
+            start_node_id: parseInt(arbor.arbor.root),
+            ends: arbor.arbor.findEndNodes().map(function(nodeId) {
+              return {
+                id: null,
+                node_id: parseInt(nodeId, 10)
+              };
+            })
+          };
+          var fakeSampler = {
+            id: null,
+            edition_time: null,
+            creation_time: null,
+            review_required: null,
+            state_id: null,
+            user_id: null,
+            skeleton_id: skeletonId,
+            interval_length: intervalLength,
+            domains: [fakeDomain]
+          };
+          let preferSmallerError = true;
+          let intervals = CATMAID.Sampling.intervalsFromModels(arbor.arbor,
+            arbor.positions, fakeDomain, intervalLength, preferSmallerError);
+
+          // Show 3D viewer confirmation dialog
+          var dialog = new CATMAID.Confirmation3dDialog({
+            title: intervals.length + " interval with a length of " +
+                intervalLength + "nm each",
+            showControlPanel: false,
+            buttons: {
+              "Close": function() {
+                dialog.close();
+              }
+            }
+          });
+          dialog.show();
+
+          // At the moment the 3D viewer is only accessible after display
+          var widget = dialog.webglapp;
+          var models = {};
+          models[skeletonId] = new CATMAID.SkeletonModel(skeletonId);
+
+          // Add skeleton to 3D viewer and configure shading
+          widget.addSkeletons(models, function() {
+            // Add sampling information to skeleton
+            let skeleton = widget.space.content.skeletons[skeletonId];
+            if (!skeleton) {
+              throw new CATMAID.ValueError('Couldn\'t find skeleton ' +
+                  skeletonId + ' in 3D viewer');
+            }
+            // Set sampler on skeleton so that shading method doesn't try to
+            // pull sampler data from back-end.
+            skeleton.setSamplers([fakeSampler]);
+
+            // Set new shading and coloring methods
+            widget.options.color_method = 'sampler-intervals';
+            widget.options.shading_method = 'sampler-intervals';
+            widget.options.interpolate_vertex_colots = false;
+
+            // Look at center of mass of skeleton and update screen
+            widget.lookAtSkeleton(skeletonId);
+
+            return widget.updateSkeletonColors()
+              .then(function() { widget.render(); });
+
+          });
+        });
+      })
+      .catch(CATMAID.handleError);
   };
 
   BackboneWorkflowStep.prototype.createNewSampler = function(widget) {
@@ -861,7 +981,11 @@
             widget.options.color_method = 'sampler-domains';
             widget.options.shading_method = 'sampler-domains';
             widget.options.interpolate_vertex_colots = false;
-            widget.updateSkeletonColors();
+            widget.updateSkeletonColors()
+              .then(function() { widget.render(); });
+
+            // Look at center of mass of skeleton and update screen
+            widget.lookAtSkeleton(skeletonId);
           });
         });
       }).then(function(result) {
@@ -976,6 +1100,7 @@
         CATMAID.fetch(project.id +  "/samplers/domains/" + domain.id + "/intervals/", "GET")
           .then(function(result) {
             self.availableIntervals = result;
+            widget.state['domainIntervals'] = result;
             return self.ensureMetadata()
               .then(callback.bind(window, {
                 draw: data.draw,
@@ -1058,7 +1183,7 @@
           title: "Action",
           orderable: false,
           render: function(data, type, row, meta) {
-            return '<a href="#" data-action="next">Open</a>';
+            return '<a href="#" data-action="next">Open</a> <a href="#" data-action="review">Review</a>';
           }
         }
       ],
@@ -1082,6 +1207,11 @@
       widget.state['interval'] = data;
       widget.workflow.advance();
       widget.update();
+    }).on('click', 'a[data-action=review]', function() {
+      var skeletonId = widget.state['skeletonId'];
+      var tr = $(this).closest('tr');
+      var data =  $(table).DataTable().row(tr).data();
+      return reviewInterval(skeletonId, data);
     });
   };
 
@@ -1170,52 +1300,15 @@
           var models = {};
           models[skeletonId] = new CATMAID.SkeletonModel(skeletonId);
           widget.addSkeletons(models, function() {
-
-            var makeEndNode = function(nodeId) {
-              return {
-                id: null,
-                node_id: parseInt(nodeId, 10)
-              };
-            };
-
-            /*
-
-            // The defined domains are noy yet available from the back-end,
-            // prepopulate the skeleton's sampler property with fake data that
-            // showing the domains to be created.
-            var skeletons = widget.space.content.skeletons;
-            var fakeDomainId = 0;
-            var previewDomains = domains.map(function(d) {
-              return {
-                ends : d.endNodeIds.map(makeEndNode),
-                id: fakeDomainId++, // use fake ID, needed for different colors
-                start_node_id: d.startNodeId, // needed
-                // parent_interval: null,
-                // project_id: project.id,
-                // sampler_id: null,
-              };
-            });
-            for (var skeletonId in skeletons) {
-              var skeleton = skeletons[skeletonId];
-              skeleton.setSamplers([{
-                id: null,
-                domains: previewDomains,
-                // creation_time,
-                // edition_time,
-                // interval_length,
-                // skeleton_id,
-                // state_id,
-                // user_ud
-              }]);
-            }
-
-            */
-
             // Set new shading and coloring methods
             widget.options.color_method = 'sampler-intervals';
             widget.options.shading_method = 'sampler-intervals';
             widget.options.interpolate_vertex_colots = false;
-            widget.updateSkeletonColors();
+            widget.updateSkeletonColors()
+              .then(function() { widget.render(); });
+
+            // Look at center of mass of skeleton and update screen
+            widget.lookAtSkeleton(skeletonId);
           });
         });
       })
@@ -1278,91 +1371,17 @@
       });
   };
 
-
-  /**
-   * Return all nodes on the straight path in then interval [startNodeId,
-   * endNodeId], assuming both nodes are connected through a monotone
-   * parent-child relationship. The direction doesn't matter as long as <strict>
-   * isn't set to true. If this is the case, the start node has to be closer to
-   * root than end node. The result can optionally be sorted by setting <sort>
-   * to true.
-   */
-  var getIntervalBackboneNodes = function(arbor, startNodeId, endNodeId, sort, strict) {
-    var intervalNodes = [];
-    // Assume end node is downstream of start node
-    var nodes = arbor.edges;
-    var lastNode = endNodeId;
-    while (true) {
-      lastNode = parseInt(lastNode, 10);
-      intervalNodes.push(lastNode);
-      if (lastNode == startNodeId) {
-        break;
-      }
-
-      lastNode = nodes[lastNode];
-      if (!lastNode) {
-        break;
-      }
-    }
-
-    if (intervalNodes.length === 0) {
-      return null;
-    }
-
-    // If the last node is not the interval start node, try reversing start/end
-    // node if not in strict mode.
-    if (intervalNodes[intervalNodes.length - 1] == startNodeId) {
-      return sort ? intervalNodes.reverse() : intervalNodes;
-    } else {
-      return strict ? null : getIntervalBackboneNodes(arbor, endNodeId, startNodeId, sort, true);
-    }
-  };
-
-  /**
-   * Return all nodes that are part of the requested interval. This set will not
-   * contain any branches starting off the start or end node, as these will be
-   * part of other intervals.
-   */
-  var getIntervalNodes = function(arbor, startNodeId, endNodeId) {
-    startNodeId = parseInt(startNodeId, 10);
-    endNodeId = parseInt(endNodeId, 10);
-    var intervalBackbone = getIntervalBackboneNodes(arbor, startNodeId,
-        endNodeId, true);
-
-    if (!intervalBackbone || intervalBackbone.length === 0) {
-      throw new CATMAID.ValueError("Could not find interval backbone for between nodes " +
-          startNodeId + " and " + endNodeId);
-    }
-
-    var edges = arbor.edges;
-    var allSuccessors = arbor.allSuccessors();
-
-    // Collect nodes between start and end of the interval back-bone, all
-    // branches inbetween will be added. Branches originating from the start or
-    // end node will *not* be added, other intervals have to be used for those.
-    var workingSet = intervalBackbone.map(function(n) {
-      // Make sure we deal with numbers
-      return parseInt(n, 10);
+  var reviewInterval = function(skeletonId, interval) {
+    var reviewWidget = WindowMaker.create('review-system').widget;
+    var strategy = CATMAID.NodeFilterStrategy['sampler-interval'];
+    var rule = new CATMAID.SkeletonFilterRule(strategy, {
+      'intervalId': interval.id
     });
-    var intervalNodes = new Set(workingSet);
-    while (workingSet.length > 0) {
-      var currentNodeId = workingSet.pop();
-      if (currentNodeId === startNodeId || currentNodeId === endNodeId) {
-        continue;
-      }
-
-      var children = allSuccessors[currentNodeId];
-      for (var i=0; i<children.length; ++i) {
-        var childId = parseInt(children[i], 10);
-        intervalNodes.add(childId);
-        workingSet.push(childId);
-      }
-    }
-
-    return intervalNodes;
+    reviewWidget.filterRules.push(rule);
+    reviewWidget.startSkeletonToReview(skeletonId);
   };
 
-  /**
+/**
    * Pick a synapse at random from the traced interval (input, output, or
    * either, depending on the goals).
    */
@@ -1403,6 +1422,14 @@
       },
       {
         type: 'button',
+        label: 'Review interval',
+        title: "Review the selected interval in a new review widget",
+        onclick: function() {
+          self.reviewCurrentInterval(widget);
+        }
+      },
+      {
+        type: 'button',
         label: 'Pick random synapse',
         title: "Select a random non-abandoned, non-excluded synapse to continue with",
         onclick: function() {
@@ -1434,6 +1461,18 @@
       CATMAID.warn("Need domain for synapse workflow step");
       return;
     }
+    var availableIntervals = widget.state['domainIntervals'];
+    if (availableIntervals === undefined) {
+      CATMAID.warn("Need intervals available in domain");
+      return;
+    }
+    var otherIntervalBoundaries = availableIntervals.reduce(function(o, testInterval) {
+      if (interval.id !== testInterval.id) {
+        o.add(testInterval.start_node_id);
+        o.add(testInterval.end_node_id);
+      }
+      return o;
+    }, new Set());
 
     var p = content.appendChild(document.createElement('p'));
     var msg = (widget.state['reviewRequired'] ?
@@ -1474,25 +1513,22 @@
     var outputTable = document.createElement('table');
     content.appendChild(outputTable);
 
-    // Get arbor if not already cached
-    var arborParser = widget.state['arbor'];
-    var prepare = Promise.resolve();
-    if (!arborParser) {
-      prepare = CATMAID.Sampling.getArbor(skeletonId)
-          .then(function(result) {
-            arborParser = result;
-            widget.state['arbor'] = result;
-          });
-    }
+    // Get current arbor. Don't use the cached one, because the user is expected
+    // to change the arbor in this step.
+    var prepare = CATMAID.Sampling.getArbor(skeletonId)
+      .then(function(result) {
+        widget.state['arbor'] = result;
+      });
     // Create up-to-date version of interval nodes
     var self = this;
     Promise.all([prepare, this.ensureMetadata()])
       .then(getDomainDetails.bind(this, project.id, domain.id))
       .then(function(domainDetails) {
+        var arborParser = widget.state['arbor'];
         // Regenerate interval information
         self.intervalTreenodes.clear();
-        var intervalNodes = getIntervalNodes(arborParser.arbor,
-            interval.start_node_id, interval.end_node_id);
+        var intervalNodes = CATMAID.Sampling.getIntervalNodes(arborParser.arbor,
+            interval.start_node_id, interval.end_node_id, otherIntervalBoundaries);
         self.intervalTreenodes.addAll(intervalNodes);
       })
       .then(function() {
@@ -1710,6 +1746,20 @@
     }
   };
 
+  SynapseWorkflowStep.prototype.reviewCurrentInterval = function(widget) {
+    var skeletonId = widget.state['skeletonId'];
+    if (!skeletonId) {
+      throw new CATMAID.ValueError("Need skeleton ID for interval review");
+    }
+
+    var interval = widget.state['interval'];
+    if (!interval) {
+      throw new CATMAID.ValueError("Need interval for interval review");
+    }
+
+    return reviewInterval(skeletonId, interval);
+  };
+
   SynapseWorkflowStep.prototype.pickRandomSynapse = function(widget) {
     if (!this.connectorData) {
       CATMAID.warn('Couldn\'t find any connectors');
@@ -1832,6 +1882,8 @@
 
   // Register widget with CATMAID
   CATMAID.registerWidget({
+    name: "Reconstruction Sampler",
+    description: "Find strongly connected partners through sampling",
     key: 'reconstruction-sampler',
     creator: ReconstructionSampler
   });

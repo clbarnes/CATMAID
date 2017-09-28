@@ -1503,7 +1503,7 @@
     var models = this.get_entities().reduce((function(o, n) {
       n.skeleton_ids.forEach(function(skid) {
         var model = new CATMAID.SkeletonModel(skid, n.name,
-            new THREE.Color().setRGB(1, 1, 0));
+            new THREE.Color(1, 1, 0));
         model.selected = false;
         this[skid] = model;
       }, o);
@@ -1527,7 +1527,7 @@
     return this.get_entities(true).reduce((function(o, n) {
       n.skeleton_ids.forEach(function(skid) {
         var model = new CATMAID.SkeletonModel(skid, n.name,
-            new THREE.Color().setRGB(1, 1, 0));
+            new THREE.Color(1, 1, 0));
         model.selected = true;
         o[skid] = model;
       });
@@ -2126,8 +2126,9 @@
             json.detail).show();
         SkeletonAnnotations.staticMoveTo(json.z, json.y, json.x)
             .then(function() {
-              SkeletonAnnotations.staticSelectNode(json.root_id);
-            });
+              return SkeletonAnnotations.staticSelectNode(json.root_id);
+            })
+            .catch(CATMAID.handleError);
       });
     }).bind(this);
 
@@ -2190,6 +2191,20 @@
       if (this.skeleton_ids.length > 0) {
         WindowMaker.create('connector-table',
             this.getSelectedSkeletonModels());
+      }
+    }).bind(this);
+
+    var neuronHistoryButton = document.createElement('input');
+    neuronHistoryButton.setAttribute('type', 'button');
+    neuronHistoryButton.setAttribute('value', 'Neuron history');
+    container.append(neuronHistoryButton);
+
+    neuronHistoryButton.onclick = (function() {
+      if (this.skeleton_ids.length > 0) {
+        var handles = WindowMaker.create('neuron-history');
+        if (handles && handles.widget) {
+          handles.widget.skeletonSource.append(this.getSelectedSkeletonModels());
+        }
       }
     }).bind(this);
 
@@ -2362,7 +2377,7 @@
   NeuronNavigator.NeuronNode.prototype.getSkeletonModels = function() {
     return this.skeleton_ids.reduce((function(o, skid) {
       o[skid] = new CATMAID.SkeletonModel(skid, this.neuron_name,
-          new THREE.Color().setRGB(1, 1, 0));
+          new THREE.Color(1, 1, 0));
       return o;
     }).bind(this), {});
   };

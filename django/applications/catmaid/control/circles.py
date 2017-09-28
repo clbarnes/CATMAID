@@ -5,9 +5,10 @@ import json
 import six
 import networkx as nx
 
-from itertools import combinations
+from itertools import combinations, chain
 from collections import defaultdict
 from functools import partial
+import math
 
 from django.db import connection
 from django.http import HttpResponse
@@ -90,6 +91,7 @@ def circles_of_hell(request, project_id=None):
     skeleton_ids = tuple(all_circles - first_circle)
     return HttpResponse(json.dumps([skeleton_ids, _neuronnames(skeleton_ids, project_id)]))
 
+
 @requires_user_role(UserRole.Browse)
 def find_directed_paths(request, project_id=None):
     """ Given a set of two or more skeleton IDs, find directed paths of connected neurons between them, for a maximum inner path length as given (i.e. origin and destination not counted). A directed path means that all edges are of the same kind, e.g. presynaptic_to. """
@@ -152,7 +154,7 @@ def find_directed_paths(request, project_id=None):
                 if not pre_skid in t1:
                     t2.add(pre_skid)
             t1 = t2
- 
+
     # Nodes will not be in the graph if they didn't have further connections,
     # like for example will happen for placeholder skeletons e.g. at unmerged postsynaptic sites.
     all_paths = []
@@ -160,10 +162,78 @@ def find_directed_paths(request, project_id=None):
         if graph.has_node(source):
             for target in targets:
                 if graph.has_node(target):
-                    for path in nx.all_simple_paths(graph, source, target, cutoff=path_length):
-                        # cutoff doesn't work, so:
-                        if len(path) <= path_length:
-                            all_paths.append(path)
+                    # The cutoff is the maximum number of hops, not the number of vertices in the path, hence -1:
+                    for path in nx.all_simple_paths(graph, source, target, cutoff=(path_length -1)):
+                        all_paths.append(path)
 
     return HttpResponse(json.dumps(all_paths))
+
+
+@requires_user_role(UserRole.Browse)
+def find_directed_path_skeletons(request, project_id=None):
+    """ Given a set of two or more skeleton Ids, find directed paths of connected neurons between them, for a maximum inner path length as given (i.e. origin and destination not counted), and return the nodes of those paths, including the provided source and target nodes.
+        Conceptually identical to find_directed_paths but far more performant. """
+
+    origin_skids = set(int(v) for k,v in six.iteritems(request.POST) if k.startswith('sources['))
+    target_skids = set(int(v) for k,v in six.iteritems(request.POST) if k.startswith('targets['))
+
+    if len(origin_skids) < 1 or len(target_skids) < 1:
+        raise Exception('Need at least 1 skeleton IDs for both sources and targets to find directed paths!')
+
+    max_n_hops = int(request.POST.get('n_hops', 2))
+    min_synapses = int(request.POST.get('min_synapses', -1))
+    if -1 == min_synapses:
+        min_synapses = float('inf')
+
+    cursor = connection.cursor()
+    relations = _relations(cursor, project_id)
+
+    def fetch_adjacent(cursor, skids, relation1, relation2, min_synapses):
+        """ Return the list of skids one hop away from the given skids. """
+        cursor.execute("""
+        SELECT tc2.skeleton_id
+        FROM treenode_connector tc1,
+             treenode_connector tc2
+        WHERE tc1.project_id = %s
+          AND tc1.skeleton_id in (%s)
+          AND tc1.connector_id = tc2.connector_id
+          AND tc1.skeleton_id != tc2.skeleton_id
+          AND tc1.relation_id = %s
+          AND tc2.relation_id = %s
+        GROUP BY tc1.skeleton_id, tc2.skeleton_id
+        HAVING count(*) >= %s
+        """ % (int(project_id),
+              ','.join(str(int(skid)) for skid in skids),
+              int(relation1),
+              int(relation2),
+              float(min_synapses)))
+        return chain.from_iterable(cursor.fetchall())
+
+    pre = relations['presynaptic_to']
+    post = relations['postsynaptic_to']
+
+    def fetch_fronts(cursor, skids, max_n_hops, relation1, relation2, min_synapses):
+        fronts = [set(skids)]
+        for n_hops in range(1, max_n_hops):
+            adjacent = set(fetch_adjacent(cursor, fronts[-1], relation1, relation2, min_synapses))
+            for front in fronts:
+                adjacent -= front
+            if len(adjacent) > 0:
+                fronts.append(adjacent)
+            else:
+                break
+        # Fill in the rest
+        while len(fronts) < max_n_hops:
+            fronts.append(set())
+        return fronts
+
+    origin_fronts = fetch_fronts(cursor, origin_skids, max_n_hops, pre, post, min_synapses)
+    target_fronts = fetch_fronts(cursor, target_skids, max_n_hops, post, pre, min_synapses)
+
+    skeleton_ids = origin_fronts[0].union(target_fronts[0])
+
+    for i in range(1, max_n_hops):
+        skeleton_ids = skeleton_ids.union(origin_fronts[i].intersection(target_fronts[max_n_hops -i]))
+
+    return HttpResponse(json.dumps(tuple(skeleton_ids)))
 

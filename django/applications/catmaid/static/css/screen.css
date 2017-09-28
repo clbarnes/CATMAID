@@ -95,8 +95,21 @@ label input {
   margin-right: 0.25em;
 }
 
+label.checkbox-label {
+  margin: 0.1em 0.35em;
+  display: inline-block;
+}
+
+label.checkbox-label input {
+  vertical-align: middle;
+}
+
 .cm-center {
   text-align: center;
+}
+
+.clickable {
+  cursor: pointer;
 }
 
 #imprint {
@@ -435,6 +448,10 @@ div.clustering-content .content {
 
 .navigator_content p {
   margin-left: 0.2em;
+}
+
+table.neuron_annotations_query_fields {
+  border-spacing: 0.5em 0.1em;
 }
 
 .neuron_annotations_query_results_table td {
@@ -1024,6 +1041,10 @@ a.neuron-selection-link:hover {
   float: left;
 }
 
+div#dialog-confirm select {
+  width: 100%;
+}
+
 table.skeleton-table {
   width: 100%;
 }
@@ -1190,7 +1211,7 @@ div.selection-table.windowContent {
   background: white;
   padding: 4px;
   cursor: default;
-  z-index: 1;
+  z-index: 10;
   overflow: auto;
   max-height: 20em;
 }
@@ -1245,4 +1266,50 @@ img.missing-image:before {
   position: absolute;
   left: 0;
   top: 0;
+}
+
+.selection-box {
+  position: absolute;
+  top: 500px;
+  left: 500px;
+  margin: 0;
+  padding: 0;
+  border: solid 1px #0000FF;
+  background: url(../images/blue20.png);
+  overflow: visible;
+  z-index: 3;
+  width: 100px;
+  height: 100px;
+}
+
+.selection-box-text {
+  position: absolute;
+  margin: 0;
+  padding: 2px;
+  background: #0000FF;
+  color: #FFFFFF;
+  white-space: nowrap;
+}
+
+.widget-list label {
+  width: 5em;
+}
+
+.widget-list label input {
+  width: 10em;
+}
+
+.widget-list table {
+  width:100%;
+  cursor: pointer;
+}
+.widget-list table td {
+  padding: 0.1em 0.3em 0.1em 0.3em;
+  white-space: nowrap;
+  min-width: 10em;
+}
+
+.widget-list .dataTables_info {
+  padding-left: 0.4em;
+  padding-top: 0.6em;
 }

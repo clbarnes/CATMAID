@@ -6,17 +6,9 @@ QUnit.test('Utilities test', function( assert ) {
   // Test CATMAID.tools.compareStrings
   var stringList = ['Test', 'Value', '4', 'test-90', 'test-87', '5010'];
   stringList.sort(CATMAID.tools.compareStrings);
-  // Unfortunately, localeCompare() is implemented differently in PhantomJS <
-  // 2.0 from  how all major browsers do it.
-  if (CATMAID.tests.runByPhantomJS()) {
-    assert.deepEqual(stringList,
-        ['4', '5010', 'Test', 'Value', 'test-87', 'test-90'],
-        "CATMAID.tools.compareStrings sorts a list as expected");
-  } else {
-    assert.deepEqual(stringList,
-        ['4', '5010', 'Test', 'test-87', 'test-90', 'Value'],
-        "CATMAID.tools.compareStrings sorts a list as expected");
-  }
+  assert.deepEqual(stringList,
+      ['4', '5010', 'Test', 'test-87', 'test-90', 'Value'],
+      "CATMAID.tools.compareStrings sorts a list as expected");
 
 
   // Test CATMAID.tools.getIndex
@@ -130,5 +122,17 @@ QUnit.test('Utilities test', function( assert ) {
     assert.strictEqual(CATMAID.tools.getDefined(undefined, 0), 0, "CATMAID.tools.getDefined returns fallback string value");
     var obj = {};
     assert.strictEqual(CATMAID.tools.getDefined(undefined, obj), obj, "CATMAID.tools.getDefined returns fallback object value");
+  })();
+
+  // Test humanReadableTimeInterval
+  (function() {
+    assert.strictEqual(CATMAID.tools.humanReadableTimeInterval(10, new Set(['sec'])), '< 1sec',
+        'CATMAID.tools.humanReadableTimeInterval returns expected result');
+    assert.strictEqual(CATMAID.tools.humanReadableTimeInterval(119000, new Set(['sec', 'min'])), '1min 59sec',
+        'CATMAID.tools.humanReadableTimeInterval returns expected result');
+    assert.strictEqual(CATMAID.tools.humanReadableTimeInterval(3396724, new Set(['sec', 'min', 'hours', 'days'])), '56min 36sec',
+        'CATMAID.tools.humanReadableTimeInterval returns expected result');
+    assert.strictEqual(CATMAID.tools.humanReadableTimeInterval(4496724, new Set(['sec', 'min', 'hours', 'days'])), '1h 14min 56sec',
+        'CATMAID.tools.humanReadableTimeInterval returns expected result');
   })();
 });

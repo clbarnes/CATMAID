@@ -358,6 +358,16 @@
         },
 
         /**
+         * Unregister all clients and remove all managed skeletons.
+         */
+        clear: function() {
+          var skeletonIds = Object.keys(managedSkeletons);
+          clients.forEach(function(c) {
+            this.unregister(c, skeletonIds);
+          }, this);
+        },
+
+        /**
          * Tries to let every registered client know that there was an update in the
          * name representation.
          */
@@ -534,8 +544,9 @@
                   }
 
                   // Left trim current component if last component is empty. If
-                  // a right-trim operation happend for the last non-empty
-                  // element, retain one space.
+                  // the the name is not empty and if a right-trim operation
+                  // happend for the last non-empty element or a left trim
+                  // operation happend on the current element, retain one space.
                   if (i > 0) {
                     var l = c.length;
                     var lastComponent = mappedComponents[i - 1];
@@ -545,9 +556,7 @@
                     } else {
                       leftTrimmed = false;
                     }
-                    if (rightTrimmed) {
-                      c = " " + c;
-                    } else if (leftTrimmed) {
+                    if (c.length > 0 && (rightTrimmed || leftTrimmed)) {
                       c = " " + c;
                     }
                   }

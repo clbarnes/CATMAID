@@ -1,20 +1,6 @@
 Frequently Asked Questions
 ==========================
 
-I updated to Ubuntu 12.04 and I have postgres 8.4 and 9.1 installed on my system
---------------------------------------------------------------------------------
-
-Remove all postgres version 8.4 packages (this removes also the databases).
-Then change the port in /etc/postgresql/9.1/main/postgresql.conf to::
-
-   port = 5432
-
-Restart postgres::
-
-   sudo /etc/init.d/postgresql restart
-
-Now you should be able to call the ./scripts/createuser.sh script.
-
 My CATMAID instance is working in debug mode, but can't be reached in production. What is the problem?
 ------------------------------------------------------------------------------------------------------
 
@@ -119,3 +105,13 @@ coming in the form of this header field::
   Access-Control-Allow-Origin *
 
 An example setup for Nginx can be found :ref:`here <nginx-image-data>`.
+
+Nginx won't serve static files
+------------------------------
+
+Besides checking the Nginx configuration itself, make sure the files are
+readable by the user running Nginx (e.g. ``www-data``).  Also, to serve static
+files, Nginx needs execute permission on every directory in the path to those
+files. To check this, the ``namei`` command can be very helpful, because it can
+list permissions for each path component when called like this: ``namei -l
+/path/to/static/files``.

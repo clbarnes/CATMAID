@@ -1,4 +1,4 @@
-.. _alternative-install:
+.. _nginx:
 
 Setting Up Nginx for CATMAID
 ============================
@@ -79,6 +79,14 @@ connection pooling and communicates efficiently with Nginx.
          }
        }
 
+.. note::
+
+   To serve static files, Nginx needs execute permission on every directory in
+   the path to those files (``<CATMAID-PATH>/django/static`` in example above).
+   To check this, the ``namei`` command can be very helpful, because it can list
+   permissions for each path component when called like this:
+   ``namei -l <CATMAID-PATH>/django/static``.
+
 .. _nginx-image-data:
 
 Image data
@@ -108,10 +116,14 @@ typical tile data location block could look like this::
 Besides adding the CORS header, caching is also set to be explicitly allowed,
 which might be helpful for data that doesn't change often.
 
+Of course, like with other static files, Nginx must be able able read those
+files and it needs execute permissions on every directory in the path to the
+image data.
+
 Setup based on Nginx and Gevent
 -------------------------------
 
-`Nginx  <http://nginx.org/>`_ is a web server with focus on high performance
+`Nginx  <http://nginx.org/>`__ is a web server with focus on high performance
 and concurrency while maintaining a low memory footprint. However, it is
 (by default) not a WSGI server and one needs to set this up separately. Here,
 we will use `Gevent <http://gevent.org/>`_ to provide this functionality. It

@@ -46,8 +46,6 @@
       this.handleChangedSkeleton, this);
     CATMAID.Skeletons.on(CATMAID.Skeletons.EVENT_SKELETON_DELETED,
       this.handleDeletedSkeleton, this);
-
-    CATMAID.skeletonListSources.updateGUI();
   };
 
   SkeletonConnectivity.prototype = Object.create(CATMAID.SkeletonSource.prototype);
@@ -1926,6 +1924,9 @@
         containerID, "Downstream", this.widgetID, container.width(), colorizer);
   };
 
+  // Export plot
+  CATMAID.ConnectivityGraphPlot = ConnectivityGraphPlot;
+
   /**
    * Return the number of partner links that conflict with the current filter
    * rule set.
@@ -1980,6 +1981,8 @@
 
   // Register widget with CATMAID
   CATMAID.registerWidget({
+    name: "Connectivity Widget",
+    description: "List connected partner neurons",
     key: "connectivity-widget",
     creator: SkeletonConnectivity,
     state: {

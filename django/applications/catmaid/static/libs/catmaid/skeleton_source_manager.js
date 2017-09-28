@@ -36,6 +36,7 @@
   SkeletonSourceManager.prototype.add = function(source) {
     this.sources[source.getName()] = source;
     this.orderedSources.push(source.getName());
+    this.updateGUI();
   };
 
   SkeletonSourceManager.prototype.destroy = function() {
@@ -285,7 +286,8 @@
         "width": "10%",
         "render": function(data, type, row, meta) {
           var checked = row.colors ? 'checked="checked"' : '';
-          return '<label><input type="checkbox" ' + checked + ' />Colors</label>';
+          return '<label><input class="action-colors" type="checkbox" ' +
+              checked + ' />Colors</label>';
         }
       }, {
         "width": "10%",
@@ -317,6 +319,12 @@
       var subscription = datatable.row(tr).data();
       e.data.removeSubscription(subscription);
       datatable.row(tr).remove().draw();
+    });
+    $(table).on("change", "td .action-colors", source, function(e) {
+      var tr = $(this).closest("tr");
+      var subscription = datatable.row(tr).data();
+      subscription.colors = this.checked;
+      subscription.target.loadSubscriptions();
     });
     $(table).on("change", "td .action-changeop", source, function(e) {
       var tr = $(this).closest("tr");
@@ -583,6 +591,23 @@
         // Remove old skeleton
         source.removeSkeletons([oldSkeletonID]);
       }
+    }, this);
+  };
+
+  /**
+   * Get sources registered to a particular owner.
+   *
+   * @param {Object} owner Owner of source
+   *
+   * @returns A list of skeleton sources having the passed in owner. This list
+   *          is empty of no owner is found.
+   */
+  SkeletonSourceManager.prototype.getSourcesOfOwner = function(owner) {
+    return this.orderedSources.filter(function(sourceName) {
+      var source = this.sources[sourceName];
+      return source.owner === owner || source === owner;
+    }, this).map(function(sourceName) {
+      return this.sources[sourceName];
     }, this);
   };
 

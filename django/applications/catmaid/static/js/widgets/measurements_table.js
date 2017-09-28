@@ -210,7 +210,7 @@
   SkeletonMeasurementsTable.prototype.getSkeletonColor = function(skid) {
       var model = this.models[skid];
       if (model) return model.color;
-      return new THREE.Color().setRGB(1, 0, 1);
+      return new THREE.Color(1, 0, 1);
   };
 
   SkeletonMeasurementsTable.prototype.hasSkeleton = function(skid) {
@@ -361,6 +361,8 @@
 
   // Register widget with CATMAID
   CATMAID.registerWidget({
+    name: "Measurements Table",
+    description: "List various metrics for a set of neurons",
     key: "skeleton-measurements-table",
     creator: SkeletonMeasurementsTable
   });

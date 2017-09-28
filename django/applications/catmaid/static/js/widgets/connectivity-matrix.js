@@ -10,11 +10,13 @@
     this.matrix = new CATMAID.ConnectivityMatrix();
     var update = this.update.bind(this);
     this.rowDimension = new CATMAID.BasicSkeletonSource(this.getName() + " Rows", {
+      owner: this,
       handleAddedModels: update,
       handleChangedModels: update,
       handleRemovedModels: update
     });
     this.colDimension = new CATMAID.BasicSkeletonSource(this.getName() + " Columns", {
+      owner: this,
       handleAddedModels: update,
       handleChangedModels: update,
       handleRemovedModels: update
@@ -34,8 +36,6 @@
     this.rotateColumnHeaders = false;
     // Display manual order edit controls
     this.displayOrderFields = false;
-
-    CATMAID.skeletonListSources.updateGUI();
   };
 
   ConnectivityMatrixWidget.prototype = {};
@@ -1542,7 +1542,7 @@
     } else {
       var models = skeletonIDs.reduce(function(o, skid) {
         o[skid] = new CATMAID.SkeletonModel(skid, "",
-            new THREE.Color().setRGB(1, 1, 0));
+            new THREE.Color(1, 1, 0));
         return o;
       }, {});
       WindowMaker.create('selection-table').widget.append(models);

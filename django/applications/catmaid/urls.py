@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import unicode_literals
 
+from django.conf import settings
 from django.conf.urls import url
 from django.contrib.auth.decorators import login_required
 from django.views.decorators.csrf import ensure_csrf_cookie
@@ -19,7 +20,7 @@ from catmaid.control import (authentication, user, log, message, client, common,
         cropping, data_view, ontology, classification, notifications, roi,
         clustering, volume, flytem, dvid, useranalytics, user_evaluation,
         search, graphexport, transaction, graph2, circles, analytics, review,
-        wiringdiagram, object, sampler, treenodetable)
+        wiringdiagram, object, sampler, treenodetable, nat)
 
 from catmaid.views import CatmaidView
 from catmaid.history import record_request_action as record_view
@@ -126,6 +127,7 @@ urlpatterns += [
     url(r'^(?P<project_id>\d+)/samplers/domains/(?P<domain_id>\d+)/details$', sampler.get_domain_details),
     url(r'^(?P<project_id>\d+)/samplers/domains/(?P<domain_id>\d+)/intervals/$', sampler.list_domain_intervals),
     url(r'^(?P<project_id>\d+)/samplers/domains/(?P<domain_id>\d+)/intervals/add-all$', sampler.add_all_intervals),
+    url(r'^(?P<project_id>\d+)/samplers/domains/intervals/(?P<interval_id>\d+)/details$', sampler.get_interval_details),
     url(r'^(?P<project_id>\d+)/samplers/domains/intervals/(?P<interval_id>\d+)/set-state$', sampler.set_interval_state),
     url(r'^(?P<project_id>\d+)/samplers/(?P<sampler_id>\d+)/delete$', sampler.delete_sampler),
     url(r'^(?P<project_id>\d+)/samplers/(?P<sampler_id>\d+)/domains/$', sampler.list_sampler_domains),
@@ -212,6 +214,7 @@ urlpatterns += [
     url(r'^(?P<project_id>\d+)/neuron/(?P<neuron_id>\d+)/give-to-user$', record_view("neurons.give_to_user")(neuron.give_neuron_to_other_user)),
     url(r'^(?P<project_id>\d+)/neuron/(?P<neuron_id>\d+)/delete$', record_view("neurons.remove")(neuron.delete_neuron)),
     url(r'^(?P<project_id>\d+)/neurons/(?P<neuron_id>\d+)/rename$', record_view("neurons.rename")(neuron.rename_neuron)),
+    url(r'^(?P<project_id>\d+)/neurons/$', neuron.list_neurons),
     url(r'^(?P<project_id>\d+)/neurons/from-models$', neuron.get_neuron_ids_from_models),
 ]
 
@@ -291,6 +294,7 @@ urlpatterns += [
     url(r'^(?P<project_id>\d+)/skeleton/(?P<skeleton_id>\d+)/neuroml$', skeletonexport.skeletons_neuroml),
     url(r'^(?P<project_id>\d+)/skeleton/(?P<skeleton_id>\d+)/json$', skeletonexport.skeleton_with_metadata),
     url(r'^(?P<project_id>\d+)/skeleton/(?P<skeleton_id>\d+)/compact-json$', skeletonexport.skeleton_for_3d_viewer),
+    url(r'^(?P<project_id>\d+)/skeleton/(?P<skeleton_id>\d+)/nrrd$', nat.export_nrrd),
     url(r'^(?P<project_id>\d+)/(?P<skeleton_id>\d+)/(?P<with_nodes>\d)/(?P<with_connectors>\d)/(?P<with_tags>\d)/compact-arbor$', skeletonexport.compact_arbor),
     url(r'^(?P<project_id>\d+)/(?P<skeleton_id>\d+)/(?P<with_nodes>\d)/(?P<with_connectors>\d)/(?P<with_tags>\d)/compact-arbor-with-minutes$', skeletonexport.compact_arbor_with_minutes),
     url(r'^(?P<project_id>\d+)/skeletons/(?P<skeleton_id>\d+)/review$', skeletonexport.export_review_skeleton),
@@ -299,6 +303,7 @@ urlpatterns += [
     url(r'^(?P<project_id>\d+)/skeleton/connectors-by-partner$', skeletonexport.skeleton_connectors_by_partner),
     url(r'^(?P<project_id>\d+)/skeletons/partners-by-connector$', skeletonexport.partners_by_connector),
     url(r'^(?P<project_id>\d+)/skeletons/(?P<skeleton_id>\d+)/compact-detail$', skeletonexport.compact_skeleton_detail),
+    url(r'^(?P<project_id>\d+)/skeletons/compact-detail$', skeletonexport.compact_skeleton_detail_many),
     # Marked as deprecated, but kept for backwards compatibility
     url(r'^(?P<project_id>\d+)/(?P<skeleton_id>\d+)/(?P<with_connectors>\d)/(?P<with_tags>\d)/compact-skeleton$', skeletonexport.compact_skeleton),
 ]
@@ -311,7 +316,7 @@ urlpatterns += [
 
 # Cropping
 urlpatterns += [
-    url(r'^(?P<project_id>\d+)/stack/(?P<stack_ids>%s)/crop/(?P<x_min>%s),(?P<x_max>%s)/(?P<y_min>%s),(?P<y_max>%s)/(?P<z_min>%s),(?P<z_max>%s)/(?P<zoom_level>\d+)/(?P<single_channel>[0|1])/$' % (intlist, num, num, num, num, num, num), cropping.crop),
+    url(r'^(?P<project_id>\d+)/crop', cropping.crop),
     url(r'^crop/download/(?P<file_path>.*)/$', cropping.download_crop)
 ]
 
@@ -441,10 +446,11 @@ urlpatterns += [
     url(r'^(?P<project_id>\d+)/analytics/broken-section-nodes$', analytics.list_broken_section_nodes)
 ]
 
-# Front-end tests
-urlpatterns += [
-    url(r'^tests$', login_required(CatmaidView.as_view(template_name="catmaid/tests.html")), name="frontend_tests"),
-]
+# Front-end tests, disabled by default
+if settings.FRONT_END_TESTS_ENABLED:
+    urlpatterns += [
+        url(r'^tests$', login_required(CatmaidView.as_view(template_name="catmaid/tests.html")), name="frontend_tests"),
+    ]
 
 # Collection of various parts of the CATMAID API. These methods are usually
 # one- or two-liners and having them in a separate statement would not improve
@@ -462,6 +468,7 @@ urlpatterns += [
     # Circles
     url(r'^(?P<project_id>\d+)/graph/circlesofhell', circles.circles_of_hell),
     url(r'^(?P<project_id>\d+)/graph/directedpaths', circles.find_directed_paths),
+    url(r'^(?P<project_id>\d+)/graph/dps', circles.find_directed_path_skeletons),
 
     # Review
     url(r'^(?P<project_id>\d+)/user/reviewer-whitelist$', review.reviewer_whitelist),

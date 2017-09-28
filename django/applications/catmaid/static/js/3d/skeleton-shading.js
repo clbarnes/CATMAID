@@ -447,8 +447,8 @@
 
         if (!skeleton.axon) {
           // Not computable
-          CATMAID.warning("Shading 'dendritic-backbone' not computable for skeleton ID #" +
-          skeleton.id + ", neuron named: " + CATMAID.NeuronNameService.getInstance().getName(this.id) +
+          CATMAID.warn("Shading 'dendritic-backbone' not computable for skeleton ID #" +
+          skeleton.id + ", neuron named: " + CATMAID.NeuronNameService.getInstance().getName(skeleton.id) +
           ". The axon is missing.");
         } else {
           var arbor = skeleton.createArbor();
@@ -488,6 +488,55 @@
           }
         }
 
+        return node_weights;
+      }
+    },
+    'single-strahler-number': {
+      weights: function(skeleton, options) {
+        var arbor = skeleton.createArbor();
+        var strahler = arbor.strahlerAnalysis();
+        var node_weights = {};
+        var single = Number(options.strahler_cut);
+        arbor.nodesArray().forEach(function(node) {
+          this[node] = strahler[node] === single ? 1 : 0;
+        }, node_weights);
+        return node_weights;
+      }
+    },
+    'strahler-threshold': {
+      weights: function(skeleton, options) {
+        var arbor = skeleton.createArbor();
+        var strahler = arbor.strahlerAnalysis();
+        var node_weights = {};
+        var threshold = Number(options.strahler_cut);
+        arbor.nodesArray().forEach(function(node) {
+          this[node] = strahler[node] >= threshold ? 1 : 0;
+        }, node_weights);
+        return node_weights;
+      }
+    },
+    'axon-and-dendrite': {
+      prepare: initAxons,
+      weights: function(skeleton, options) {
+        var node_weights = {};
+        if (!skeleton.axon) {
+          // Not computable
+          return node_weights;
+        }
+        var up = 1,
+            down = 0.5;
+        if (options.invert_shading) {
+          up = 0.5;
+          down = 0;
+        }
+        var vs = skeleton.geometry['neurite'].vertices;
+        var axon_nodes = skeleton.axon.edges;
+        for (var i=0; i<vs.length; i+=2) {
+          var node_id = vs[i].node_id;
+          node_weights[node_id] = axon_nodes[node_id] ? down : up;
+        }
+        // Handle root
+        node_weights[skeleton.axon.root] = axon_nodes[node_id] ? down : up;
         return node_weights;
       }
     },
@@ -624,8 +673,14 @@
             var vn = SkeletonAnnotations.getActiveNodeId();
             var parentPos = locations[SkeletonAnnotations.getParentOfVirtualNode(vn)];
             var childPos = locations[SkeletonAnnotations.getChildOfVirtualNode(vn)];
-            var distRatio = parentPos.distanceToSquared(vnPos) / parentPos.distanceToSquared(childPos);
-            node_weights[atn] = up - distRatio * (up - down);
+            // In some situations, the real child and real `parent location is
+            // not available. For instance if a virtual node between the active
+            // virtual node and its real child is materialized and the 3D viewer
+            // isn't updated. In this cae, don't set any weights.
+            if (childPos &&parentPos) {
+              var distRatio = parentPos.distanceToSquared(vnPos) / parentPos.distanceToSquared(childPos);
+              node_weights[atn] = up - distRatio * (up - down);
+            }
           }
         }
 
@@ -854,11 +909,11 @@
       colorPicker: function(skeleton) {
         if (isFn(coloring.vertexColorizer)) {
           return coloring.vertexColorizer(skeleton, {
-            unreviewedColor: new THREE.Color().setRGB(0.2, 0.2, 0.2),
-            reviewedColor: new THREE.Color().setRGB(1.0, 0.0, 1.0),
-            axonColor: new THREE.Color().setRGB(0, 1, 0),
-            dendriteColor: new THREE.Color().setRGB(0, 0, 1),
-            notComputableColor: new THREE.Color().setRGB(0.4, 0.4, 0.4)
+            unreviewedColor: new THREE.Color(0.2, 0.2, 0.2),
+            reviewedColor: new THREE.Color(1.0, 0.0, 1.0),
+            axonColor: new THREE.Color(0, 1, 0),
+            dendriteColor: new THREE.Color(0, 0, 1),
+            notComputableColor: new THREE.Color(0.4, 0.4, 0.4)
           });
         } else {
           return function(vertex) {

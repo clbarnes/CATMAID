@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 from __future__ import unicode_literals
+from __future__ import absolute_import
 
 # General Django settings for mysite project.
 
@@ -10,6 +11,8 @@ import logging
 import mysite.pipelinefiles as pipelinefiles
 import mysite.utils as utils
 import six
+
+from celery.schedules import crontab
 
 try:
     import psycopg2
@@ -29,6 +32,11 @@ PROJECT_ROOT = utils.relative('..', '..')
 for subdirectory in ('projects', 'applications', 'lib'):
     full_path = os.path.join(PROJECT_ROOT, subdirectory)
     sys.path.insert(0, full_path)
+
+# FIXME: Newer GEOS versions won't be detected correctly in Django 1.10 and a
+# monkey patch is required. This can be removed when updating to Django 1.11.
+import custom_geos_importer
+custom_geos_importer.patch()
 
 # A list of people who get code error notifications. They will get an email
 # if DEBUG=False and a view raises an exception.
@@ -73,7 +81,6 @@ INSTALLED_APPS = (
     'django.contrib.admin.apps.SimpleAdminConfig',
     'django.contrib.staticfiles',
     'django.contrib.gis',
-    'djcelery',
     'taggit',
     'adminplus',
     'guardian',
@@ -225,6 +232,11 @@ MEDIA_HDF5_SUBDIRECTORY = 'hdf5'
 MEDIA_CROPPING_SUBDIRECTORY = 'cropping'
 MEDIA_ROI_SUBDIRECTORY = 'roi'
 MEDIA_TREENODE_SUBDIRECTORY = 'treenode_archives'
+MEDIA_EXPORT_SUBDIRECTORY = 'export'
+
+# Cropping output extension
+CROPPING_OUTPUT_FILE_EXTENSION = "tiff"
+CROPPING_OUTPUT_FILE_PREFIX = "crop_"
 
 # The maximum allowed size in Bytes for generated files. The cropping tool, for
 # instance, uses this to cancel a request if the generated file grows larger
@@ -241,13 +253,27 @@ USER_REGISTRATION_ALLOWED = False
 # A new user's defaul groups
 NEW_USER_DEFAULT_GROUPS = []
 
-# A sequence of modules that contain Celery tasks which we want Celery to know
-# about automatically.
-CELERY_IMPORTS = (
-    'catmaid.control.cropping',
-    'catmaid.control.roi',
-    'catmaid.control.treenodeexport',
-)
+# While pickle can cause security problems [1], we allow it for now and trust
+# that the Celery server will only accept connections from CATMAID. To improve
+# security, this should be changed though, see also [2].
+# [1] http://docs.celeryproject.org/en/latest/userguide/security.html#serializers
+# [2] https://github.com/catmaid/CATMAID/issues/630
+CELERY_ACCEPT_CONTENT = ['pickle']
+CELERY_TASK_SERIALIZER = 'pickle'
+
+# The default set of periodic tasks
+CELERY_BEAT_SCHEDULE = {
+    # Clean cropped stack directory every night at 23:30.
+    'daily-crop-data-cleanup': {
+        'task': 'catmaid.tasks.cleanup_cropped_stacks',
+        'schedule': crontab(hour=23, minute=30)
+    },
+    # Update project statistics every night at 23:45.
+    'daily-project-stats-summary-update': {
+        'task': 'catmaid.tasks.update_project_statistics',
+        'schedule': crontab(hour=23, minute=45)
+    }
+}
 
 # We use django-pipeline to compress and reference JavaScript and CSS files. To
 # make Pipeline integrate with staticfiles (and therefore collecstatic calls)
@@ -275,10 +301,12 @@ PIPELINE = {
 
 # Make a list of files that should be included directly (bypassing pipeline)
 # and a list of pipeline identifiers for all others.
-NON_COMPRESSED_FILES = list(six.itervalues(pipelinefiles.non_pipeline_js))
-NON_COMPRESSED_FILE_IDS = list(six.iterkeys(pipelinefiles.non_pipeline_js))
-COMPRESSED_FILE_IDS = list(six.moves.filter(lambda f: f not in NON_COMPRESSED_FILE_IDS,
-        pipelinefiles.JAVASCRIPT.keys()))
+NON_COMPRESSED_FILE_IDS = list(pipelinefiles.non_pipeline_js)
+NON_COMPRESSED_FILES = list(pipelinefiles.non_pipeline_js.values())
+STYLESHEET_IDS = list(pipelinefiles.STYLESHEETS)
+COMPRESSED_FILE_IDS = [key for key in pipelinefiles.JAVASCRIPT if key not in NON_COMPRESSED_FILE_IDS]
+
+INSTALLED_EXTENSIONS = tuple(pipelinefiles.installed_extensions)
 
 # Make Git based version of CATMAID available as a settings field
 VERSION = utils.get_version()
@@ -303,6 +331,9 @@ VERSION = utils.get_version()
 # environment. The custom PostgreSQL database wrapper uses this flag to change
 # its behavior.
 TEST_RUNNER = 'custom_testrunner.TestSuiteRunner'
+
+# By default, front end tests are disabled.
+FRONT_END_TESTS_ENABLED = False
 
 # By default GUI tests are disabled. Enable them by setting GUI_TESTS_ENABLED to
 # True (done during CI).
@@ -362,3 +393,8 @@ SWAGGER_SETTINGS = {
     },
     'doc_expansion': 'list'
 }
+
+# Needed for NRRD export
+CATMAID_FULL_URL = ""
+CATMAID_HTTP_AUTH_USER = None
+CATMAID_HTTP_AUTH_PASS = None

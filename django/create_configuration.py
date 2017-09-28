@@ -19,10 +19,11 @@ def exit_err(msg):
 # Make sure trailing and leading slashes are where they are expected.
 if abs_catmaid_path[-1] == '/':
     exit_err("abs_catmaid_path should not have a trailing slash! Aborting.")
-if catmaid_servername[-1] == '/':
-    exit_err("catmaid_servername should not have a trailing slash! Aborting.")
-if catmaid_servername.startswith('http://'):
-    exit_err("catmaid_servername should not start with 'http://'! Aborting.")
+if len(catmaid_servername) > 0:
+    if catmaid_servername[-1] == '/':
+        exit_err("catmaid_servername should not have a trailing slash! Aborting.")
+    if catmaid_servername.startswith('http://'):
+        exit_err("catmaid_servername should not start with 'http://'! Aborting.")
 if len(catmaid_subdirectory) > 0:
     if catmaid_subdirectory[-1] == '/':
         exit_err("catmaid_subdirectory should not have a trailing slash! Aborting.")
@@ -48,6 +49,8 @@ out_configfile = op.join('projects/mysite/settings.py')
 o = open( out_configfile ,'w')
 data = open( in_configfile, 'r' ).read()
 data = re.sub('CATMAIDPATH', abs_catmaid_path, data)
+data = re.sub('CATMAID_DATABASE_HOST', catmaid_database_host, data)
+data = re.sub('CATMAID_DATABASE_PORT', catmaid_database_port, data)
 data = re.sub('CATMAID_DATABASE_NAME', catmaid_database_name, data)
 data = re.sub('CATMAID_DATABASE_USERNAME', catmaid_database_username, data)
 data = re.sub('CATMAID_DATABASE_PASSWORD', catmaid_database_password, data)

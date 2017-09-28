@@ -39,7 +39,7 @@
     this.historyRequestId = undefined;
     // The current history animation, if any
     this.history = undefined;
-    // Map loaed volume IDs to an array of Three.js meshes
+    // Map loaded volume IDs to an array of Three.js meshes
     this.loadedVolumes = {};
     // Current set of filtered connectors (if any)
     this.filteredConnectors = null;
@@ -687,7 +687,7 @@
         checkbox = od.appendCheckbox("Only among loaded in 3D view", "spatial-loaded", false);
 
     od.onOK = (function() {
-      var distance = this._validate(field.value, "Invalid distance value");
+      var distance = CATMAID.tools.validateNumber(field.value, "Invalid distance value", 1);
       if (!distance) return;
       var mode = Number(choice.value),
           distanceSq = distance * distance,
@@ -716,7 +716,7 @@
         if (0 === skids.length) return CATMAID.info("No skeletons found");
         var models = {};
         skids.forEach(function(skid) {
-          models[skid] = new CATMAID.SkeletonModel(skid, "", new THREE.Color().setRGB(0.5, 0.5, 0.5));
+          models[skid] = new CATMAID.SkeletonModel(skid, "", new THREE.Color(0.5, 0.5, 0.5));
         });
         WindowMaker.create('selection-table');
         var sel = CATMAID.SelectionTable.prototype.getLastInstance();
@@ -882,7 +882,7 @@
     this.animation_history_include_merges = true;
     this.animation_history_empy_bout_length = 10;
     this.animation_history_reset_after_stop = false;
-    this.strahler_cut = 2; // to approximate twigs
+    this.strahler_cut = 2;
     this.use_native_resolution = true;
     this.interpolate_sections = false;
     this.interpolated_sections = [];
@@ -921,7 +921,8 @@
       dialog.onOK = (function() {
         this.options.tag_regex = input.value;
         this.options.color_method = colorMenu.value;
-        this.updateSkeletonColors();
+        this.updateSkeletonColors()
+          .then(this.render.bind(this));
       }).bind(this);
       dialog.onCancel = function() {
         // Reset to default (can't know easily what was selected before).
@@ -933,7 +934,8 @@
 
     this.options.color_method = colorMenu.value;
     this.space.userColormap = {};
-    this.updateSkeletonColors();
+    this.updateSkeletonColors()
+      .then(this.render.bind(this));
   };
 
   WebGLApplication.prototype.updateSkeletonColors = function() {
@@ -944,8 +946,11 @@
         Object.keys(skeletons).forEach(function(skeleton_id) {
           skeletons[skeleton_id].updateSkeletonColor(colorizer);
         });
-        this.space.render();
       }).bind(this));
+  };
+
+  WebGLApplication.prototype.render = function() {
+    this.space.render();
   };
 
   WebGLApplication.prototype.setSkeletonShadingType = function(shading) {
@@ -1220,6 +1225,7 @@
         if (filter) {
           self.options.connector_filter = filter;
           self.refreshRestrictedConnectors();
+          self.render();
         }
       });
       // Prevent application of filter. This is done in function above, once user
@@ -1230,6 +1236,7 @@
     }
 
     this.refreshRestrictedConnectors();
+    this.render();
   };
 
   WebGLApplication.prototype.refreshRestrictedConnectors = function() {
@@ -1314,8 +1321,6 @@
     // Depending on the current settings, edges might not be visible.
     this.space.updateConnectorEdgeVisibility(this.options,
       skids.map(function(skid) { return this[skid]; }, skeletons));
-
-    this.space.render();
   };
 
   /**
@@ -1361,7 +1366,8 @@
     // Set the shading of all skeletons based on the state of the "Shading" pop-up menu.
     this.options.shading_method = $('#skeletons_shading' + this.widgetID + ' :selected').attr("value");
 
-    this.updateSkeletonColors();
+    this.updateSkeletonColors()
+      .then(this.render.bind(this));
   };
 
   WebGLApplication.prototype.look_at_active_node = function() {
@@ -1379,6 +1385,17 @@
       this.space.view.controls.target.copy(position);
     }
     this.space.render();
+  };
+
+  /**
+   * Look at the center of mass of a loaded skeleton.
+   */
+  WebGLApplication.prototype.lookAtSkeleton = function(skeletonId) {
+    var skeleton = this.space.content.skeletons[skeletonId];
+    if (!skeleton) {
+      throw new CATMAID.ValueError("Skeleton " + skeletonId + " is not loaded");
+    }
+    this.lookAt(skeleton.getCenterOfMass());
   };
 
   WebGLApplication.prototype.updateActiveNode = function() {
@@ -1444,79 +1461,112 @@
 
   /** Fetch skeletons one by one, and render just once at the end. */
   WebGLApplication.prototype.addSkeletons = function(models, callback) {
-    // Update skeleton properties for existing skeletons, and remove them from models
-    var skeleton_ids = Object.keys(models).filter(function(skid) {
-      if (skid in this.space.content.skeletons) {
-        var model = models[skid],
-            skeleton = this.space.content.skeletons[skid];
-        skeleton.skeletonmodel = model;
-        skeleton.setActorVisibility(model.selected);
-        skeleton.setPreVisibility(model.pre_visible);
-        skeleton.setPostVisibility(model.post_visible);
-        skeleton.setTextVisibility(model.text_visible);
-        skeleton.setMetaVisibility(model.meta_visible);
-        skeleton.actorColor = model.color.clone();
-        skeleton.opacity = model.opacity;
-        skeleton.updateSkeletonColor(CATMAID.makeSkeletonColorizer(this.options));
-        // In case connectors are colored like skeletons, they have yo be
-        // updated, too.
-        if ('skeleton' === this.options.connector_color) {
-          this.space.updateConnectorColors(this.options, [skeleton]);
-        } else {
-          this.space.updateConnectorEdgeVisibility(this.options, [skeleton]);
-        }
-        return false;
+    // Handle multiple skeleton additions sequentially
+    var prepare;
+    if (this._activeLoading) {
+      prepare = this._activeLoading;
+    } else {
+      prepare = Promise.resolve();
+    }
+
+    // Find missing skeletons
+    prepare = prepare.then((function() {
+      var missingSkeletonIds = Object.keys(models).filter(function(skid) {
+        return !this.space.content.skeletons[skid];
+      }, this);
+
+      if (missingSkeletonIds.length > 0) {
+        var options = this.options;
+        var lean = options.lean_mode;
+        var self = this;
+
+        // Register with the neuron name service and fetch the skeleton data
+        return CATMAID.NeuronNameService.getInstance().registerAll(this, models)
+          .then(function() {
+            if (self.hasActiveFilters()) {
+              return self.insertIntoNodeWhitelist(models);
+            }
+          })
+          .then(function() {
+            return new Promise(function(resolve, reject) {
+              var url1 = CATMAID.makeURL(project.id + '/skeletons/');
+              var url2 = '/compact-detail';
+
+              fetchSkeletons(missingSkeletonIds,
+                function(skeletonId) {
+                  return url1 + skeletonId + url2;
+                },
+                function(skeletonId) {
+                  return {
+                      with_tags: !lean,
+                      with_connectors: !lean,
+                      with_history: false,
+                  };
+                },
+                function(skeletonId, json) {
+                  var sk = self.space.updateSkeleton(models[skeletonId], json,
+                      options, undefined, self.getActivesNodeWhitelist());
+                  if (sk) sk.show(options);
+                },
+                function(skeletonId) {
+                  // Failed loading: will be handled elsewhere via fnMissing in fetchCompactSkeletons
+                },
+                function() {
+                  resolve();
+                },
+                'GET');
+            });
+          })
+          .catch(CATMAID.handleError);
       }
-      return true;
-    }, this);
+    }).bind(this));
 
-    if (0 === skeleton_ids.length) return;
+    // Get colorizer for all skeletons
+    var colorizer = CATMAID.makeSkeletonColorizer(this.options);
+    prepare = prepare.then((function() {
+      return colorizer.prepare(this.space.content.skeletons);
+    }).bind(this));
 
-    var options = this.options;
-    var url1 = CATMAID.makeURL(project.id + '/skeletons/'),
-        lean = options.lean_mode,
-        url2 = '/compact-detail';
-
-    // Register with the neuron name service and fetch the skeleton data
-    var self = this;
-    CATMAID.NeuronNameService.getInstance().registerAll(this, models)
-      .then(function() {
-        if (self.hasActiveFilters()) {
-          return self.insertIntoNodeWhitelist(models);
+    // Update skeleton properties
+    var add = prepare.then((function() {
+      var availableSkletons = this.space.content.skeletons;
+      var inputSkeletonIds = Object.keys(models);
+      for (var i=0, max=inputSkeletonIds.length; i<max; ++i) {
+        var skeletonId = inputSkeletonIds[i];
+        var model = models[skeletonId];
+        var skeleton = availableSkletons[skeletonId];
+        if (skeleton) {
+          skeleton.skeletonmodel = model;
+          skeleton.setActorVisibility(model.selected);
+          skeleton.setPreVisibility(model.pre_visible);
+          skeleton.setPostVisibility(model.post_visible);
+          skeleton.setTextVisibility(model.text_visible);
+          skeleton.setMetaVisibility(model.meta_visible);
+          skeleton.actorColor = model.color.clone();
+          skeleton.opacity = model.opacity;
+          skeleton.updateSkeletonColor(colorizer);
+          // In case connectors are colored like skeletons, they have to be
+          // updated, too.
+          if ('skeleton' === this.options.connector_color) {
+            return this.space.updateConnectorColors(this.options, [skeleton]);
+          } else {
+            this.space.updateConnectorEdgeVisibility(this.options, [skeleton]);
+          }
         }
-      })
-      .then(fetchSkeletons.bind(this,
-          skeleton_ids,
-          function(skeleton_id) {
-            return url1 + skeleton_id + url2;
-          },
-          function(skeleton_id) {
-            return {
-                with_tags: !lean,
-                with_connectors: !lean,
-                with_history: false,
-            };
-          },
-          (function(skeleton_id, json) {
-            var sk = this.space.updateSkeleton(models[skeleton_id], json,
-                options, undefined, this.getActivesNodeWhitelist());
-            if (sk) sk.show(this.options);
-          }).bind(this),
-          function(skeleton_id) {
-            // Failed loading: will be handled elsewhere via fnMissing in fetchCompactSkeletons
-          },
-          (function() {
-            this.updateSkeletonColors()
-              .then((function() {
-                if (this.options.connector_filter) this.refreshRestrictedConnectors();
-                if (typeof callback === "function") {
-                  try { callback(); } catch (e) { alert(e); }
-                }
-              }).bind(this))
-              .catch(CATMAID.handleError);
-          }).bind(this),
-          'GET'))
-      .catch(CATMAID.handleError);
+      }
+    }).bind(this))
+    .then((function() {
+      if (this.options.connector_filter) {
+        this.refreshRestrictedConnectors();
+      }
+      CATMAID.tools.callIfFn(callback);
+    }).bind(this))
+    .catch(CATMAID.handleError);
+
+    // Remember this addition as active loading
+    this._activeLoading = add;
+
+    return add;
   };
 
   /** Reload skeletons from database. */
@@ -1570,12 +1620,10 @@
       CATMAID.info("No skeletons selected!");
       return;
     }
-    this.addSkeletons(models, false);
-    if (this.options.connector_filter) {
-      this.refreshRestrictedConnectors();
-    } else {
-      this.space.render();
-    }
+    return this.addSkeletons(models, false)
+      .then((function() {
+        this.space.render();
+      }).bind(this));
   };
 
   WebGLApplication.prototype.clear = function() {
@@ -1587,7 +1635,7 @@
     if (skeleton_id in this.space.content.skeletons) {
       return this.space.content.skeletons[skeleton_id].actorColor.clone();
     }
-    return new THREE.Color().setRGB(1, 0, 1);
+    return new THREE.Color(1, 0, 1);
   };
 
   WebGLApplication.prototype.hasSkeleton = function(skeleton_id) {
@@ -1611,8 +1659,10 @@
   WebGLApplication.prototype.removeSkeletons = function(skeleton_ids) {
     if (!this.space) return;
     this.space.removeSkeletons(skeleton_ids);
-    if (this.options.connector_filter) this.refreshRestrictedConnectors();
-    else this.space.render();
+    if (this.options.connector_filter) {
+      this.refreshRestrictedConnectors();
+    }
+    this.space.render();
   };
 
   WebGLApplication.prototype.changeSkeletonColors = function(skeleton_ids, colors) {
@@ -1899,6 +1949,7 @@
     this.view.camera.updateProjectionMatrix();
     this.pickingTexture.setSize(canvasWidth, canvasHeight);
     this.view.renderer.setSize(canvasWidth, canvasHeight);
+    this.staticContent.setSize(canvasWidth, canvasHeight);
     if (this.view.controls) {
       this.view.controls.handleResize();
     }
@@ -1931,7 +1982,9 @@
 
   WebGLApplication.prototype.Space.prototype.render = function() {
     if (this.view) {
-      this.view.render();
+      var beforeRender = this.staticContent.beforeRender.bind(
+          this.staticContent);
+      this.view.render(beforeRender);
     }
   };
 
@@ -2132,6 +2185,9 @@
     });
 
     this.zplane = null;
+    this.zplaneLayerMeshes = null;
+    this.zplaneScene = new THREE.Scene();
+    this.lastZPlaneOptions = null;
 
     this.missing_sections = [];
 
@@ -2168,13 +2224,7 @@
       s.geometry.dispose();
       s.material.dispose(); // it is ok to call more than once
     });
-    if (this.zplane) {
-      this.zplane.geometry.dispose();
-      // Dispose individual zplane tiles in texture mode.
-      this.zplane.material.materials.forEach(function(m) {
-        m.dispose();
-      });
-    }
+    this.disposeZplane();
 
     // dispose shared geometries
     [this.labelspheregeometry, this.radiusSphere, this.icoSphere, this.cylinder].forEach(function(g) {
@@ -2192,6 +2242,48 @@
     this.synapticColors[2].dispose();
     this.synapticColors.default.dispose();
   };
+
+  /**
+   * Dispose a material instance and a bound texture if it has one.
+   */
+  var disposeMaterial = function(m) {
+    if (m.map) {
+      m.map.dispose();
+    }
+    m.dispose();
+  };
+
+  WebGLApplication.prototype.Space.prototype.StaticContent.prototype.disposeZplane = function(space) {
+    if (this.zplane) {
+      this.zplane.geometry.dispose();
+      this.zplane.material.dispose();
+
+      if (space) {
+        space.scene.remove(this.zplane);
+      }
+    }
+    if (this.zplaneLayerMeshes) {
+      for (var i=0; i<this.zplaneLayerMeshes.length; ++i) {
+        this.zplaneLayerMeshes[i].geometry.dispose();
+        // Dispose individual zplane tiles in texture mode.
+        this.zplaneLayerMeshes[i].material.materials.forEach(disposeMaterial);
+      }
+
+      if (this.zplaneScene) {
+        this.zplaneScene.remove.apply(this.zplaneScene, this.zplaneLayerMeshes);
+      }
+    }
+
+    if (this.zplaneRenderTarget) {
+      this.zplaneRenderTarget.dispose();
+    }
+
+    this.zplane = null;
+    this.zplaneLayerMeshes = null;
+    this.zplaneLayers = null;
+    this.zplaneRenderTarget = null;
+  };
+
 
   /**
    * Update shared materials that can be updated during run-time.
@@ -2401,13 +2493,38 @@
     }
 
     if (options.show_zplane) {
-      this.createZPlane(space, project.focusedStackViewer,
-          options.zplane_texture ? options.zplane_zoomlevel : null,
-          options.zplane_opacity);
+      var zplaneOptions = {
+        focusedStackViewer: project.focusedStackViewer,
+        texture: options.zplane_texture,
+        zoomlevel: options.zplane_zoomlevel,
+        opacity: options.zplane_opacity
+      };
+
+      if (this.zplaneChanged(zplaneOptions)) {
+        this.lastZPlaneOptions = zplaneOptions;
+        this.createZPlane(space, project.focusedStackViewer,
+            options.zplane_texture ? options.zplane_zoomlevel : null,
+            options.zplane_opacity);
+      }
     } else {
-      if (this.zplane) space.scene.remove(this.zplane);
-      this.zplane = null;
+      this.lastZPlaneOptions = null;
+      this.disposeZplane(space);
     }
+  };
+
+  WebGLApplication.prototype.Space.prototype.StaticContent.prototype.zplaneChanged = function(options) {
+    if (!this.lastZPlaneOptions) {
+      return true;
+    }
+
+    for (var o in options) {
+      if (this.lastZPlaneOptions.hasOwnProperty(o)) {
+        if (this.lastZPlaneOptions[o] !== options[o]) {
+          return true;
+        }
+      }
+    }
+    return false;
   };
 
   WebGLApplication.prototype.Space.prototype.StaticContent.prototype.createPlaneGeometry =
@@ -2581,37 +2698,60 @@
    */
   WebGLApplication.prototype.Space.prototype.StaticContent.prototype.createZPlane =
       function(space, stackViewer, textureZoomLevel, opacity) {
-    if (this.zplane) space.scene.remove(this.zplane);
+    this.disposeZplane(space);
 
-    if ("max" === textureZoomLevel) {
-      textureZoomLevel = stackViewer.primaryStack.MAX_S;
-    }
-    this.zplaneTileSource = stackViewer.primaryStack.createTileSourceForMirror(0);
-    // Create geometry for plane
-    var geometry = this.createPlaneGeometry(stackViewer.primaryStack, this.zplaneTileSource, textureZoomLevel);
+    // Create geometry for plane based on primary stack
+    var geometry = this.createPlaneGeometry(stackViewer.primaryStack);
+    var material = new THREE.MeshBasicMaterial({
+        color: 0x151349, side: THREE.DoubleSide, opacity: opacity,
+        transparent: true});
+    this.zplane = new THREE.Mesh(geometry, material);
+    space.scene.add(this.zplane);
 
     if (textureZoomLevel || 0 === textureZoomLevel) {
-      // Remember zoom level for updates
-      this.zplaneZoomLevel = textureZoomLevel;
-      // Every tile in the z plane is made out of two triangles.
-      this.zplaneMaterials = new Array(geometry.faces.length / 2);
-      for (var i=0; i<this.zplaneMaterials.length; ++i) {
-        this.zplaneMaterials[i] = new THREE.MeshBasicMaterial({
-          color: 0xffffff,
-          side: THREE.DoubleSide,
-          opacity: opacity,
-          transparent: true
+      this.zplaneLayerMeshes = [];
+      this.zplaneLayers = [];
+      // Each layer ha its own mesh, which makes it easier to position
+      // layers relative to each other and provides support for blending.
+      var tileLayers = stackViewer.getLayersOfType(CATMAID.TileLayer);
+
+      for (var l=0; l<tileLayers.length; ++l) {
+        var tileLayer = tileLayers[l];
+        // Only show visible tile layers
+        if (!tileLayer.visible) {
+          continue;
+        }
+
+        var zoomLevel = "max" === textureZoomLevel ? tileLayer.stack.MAX_S :
+            Math.min(tileLayer.stack.MAX_S, textureZoomLevel);
+        var tileSource = tileLayer.stack.createTileSourceForMirror(tileLayer.mirrorIndex);
+        var geometry = this.createPlaneGeometry(tileLayer.stack, tileSource, zoomLevel);
+
+        // Every tile in the z plane is made out of two triangles.
+        var zplaneMaterials = new Array(geometry.faces.length / 2);
+        for (var i=0; i<zplaneMaterials.length; ++i) {
+          zplaneMaterials[i] = new THREE.MeshBasicMaterial({
+            color: 0xffffff,
+            side: THREE.DoubleSide,
+            opacity: opacity,
+            transparent: true,
+          });
+        }
+
+        var mesh = new THREE.Mesh(geometry, new THREE.MultiMaterial(zplaneMaterials));
+        this.zplaneLayerMeshes.push(mesh);
+        this.zplaneLayers.push({
+          hasImages: true,
+          mesh: mesh,
+          tileSource: tileSource,
+          materials: zplaneMaterials,
+          zoomLevel: zoomLevel,
+          stack: tileLayer.stack,
         });
       }
-      this.zplane = new THREE.Mesh(geometry, new THREE.MultiMaterial(this.zplaneMaterials));
-    } else {
-      var material = new THREE.MeshBasicMaterial({
-        color: 0x151349, side: THREE.DoubleSide, opacity: opacity, transparent: true});
-      this.zplane = new THREE.Mesh(geometry, material);
-      this.zplaneMaterials = null;
-    }
 
-    space.scene.add(this.zplane);
+      this.zplaneScene.add.apply(this.zplaneScene, this.zplaneLayerMeshes);
+    }
 
     this.updateZPlanePosition(space, stackViewer);
   };
@@ -2620,60 +2760,199 @@
     return Math.floor((width * Math.pow(2, -zoom) - 1) / part) + 1;
   };
 
+  // To get arround potential CORS restrictions load tile into image and
+  // then into texture.
+  var loadTile = function() {
+    this.__material.visible = true;
+    this.__material.map.needsUpdate = true;
+    this.__material.needsUpdate = true;
+    this.__notify();
+  };
+
+  var setDepth = function(target, stack, source, offset) {
+    offset = offset === undefined ? 0 : offset;
+    switch (stack.orientation) {
+      case CATMAID.Stack.ORIENTATION_XY:
+        target.z = stack.stackToProjectZ(source.z, source.y, source.x) + offset;
+        break;
+      case CATMAID.Stack.ORIENTATION_XZ:
+        target.y = stack.stackToProjectY(source.z, source.y, source.x) + offset;
+        break;
+      case CATMAID.Stack.ORIENTATION_ZY:
+        target.x = stack.stackToProjectX(source.z, source.y, source.x) + offset;
+        break;
+    }
+    return target;
+  };
+
   WebGLApplication.prototype.Space.prototype.StaticContent.prototype.updateZPlanePosition = function(space, stackViewer) {
-    if (this.zplane) {
-      var stack = stackViewer.primaryStack;
-      var v = new THREE.Vector3(0, 0, 0);
-      switch (stackViewer.primaryStack.orientation) {
-        case CATMAID.Stack.ORIENTATION_XY:
-          v.z = stack.stackToProjectZ(stackViewer.z, stackViewer.y, stackViewer.x);
-          break;
-        case CATMAID.Stack.ORIENTATION_XZ:
-          v.y = stack.stackToProjectY(stackViewer.z, stackViewer.y, stackViewer.x);
-          break;
-        case CATMAID.Stack.ORIENTATION_ZY:
-          v.x = stack.stackToProjectX(stackViewer.z, stackViewer.y, stackViewer.x);
-          break;
+    var self = this;
+    var zplane = this.zplane;
+    if (!zplane) {
+      return;
+    }
+    var stack = stackViewer.stack;
+
+    // Find reference stack position, add set location of current layer.
+    var pos = new THREE.Vector3(0, 0, 0);
+    setDepth(pos, stackViewer.primaryStack, stackViewer);
+    zplane.position.copy(pos);
+
+    if (!this.zplaneLayerMeshes) {
+      return;
+    }
+
+    // Wait for all images to render (if any), from all layers. This is not used
+    // for non-image z planes.
+    self.zplaneTileCounter = 0;
+    self.zplaneTileLoadErrors = [];
+    for (var i=0; i<this.zplaneLayers.length; ++i) {
+      var materials = this.zplaneLayers[i].materials;
+      if (materials) {
+        self.zplaneTileCounter += materials.length;
       }
-      this.zplane.position.copy(v);
+    }
+    var notify = function() {
+      self.zplaneTileCounter--;
+      if (0 === self.zplaneTileCounter) {
+        zplane.material.uniforms['zplane'].needsUpdate = true;
+        space.render();
+      }
+    };
+    var handleError = function(error) {
+      this.__material.visible = false;
+      this.__material.map.needsUpdate = false;
+      this.__material.needsUpdate = true;
+      self.zplaneTileCounter--;
+      self.zplaneTileLoadErrors.push(error);
+      if (self.zplaneTileCounter === 0) {
+        //CATMAID.warn('Couldn\'t load ' + loadErrors.length + ' tile(s)');
+        space.render();
+      }
+    };
 
-      // Also update tile texture
-      if (this.zplaneMaterials) {
-        var tileSource = this.zplaneTileSource;
-        // To get arround potential CORS restrictions load tile into image and
-        // then into texture.
-        var loadTile = function(texture, material, notify) {
-          material.map = texture;
-          texture.needsUpdate = true;
-          material.needsUpdate = true;
-          notify();
-        };
+    for (var i=0; i<this.zplaneLayers.length; ++i) {
+      var layer = this.zplaneLayers[i];
+      var stack = layer.stack;
 
-        var counter = this.zplaneMaterials.length;
-        var notify = function() {
-          counter = counter - 1;
-          if (0 === counter) {
-            space.render();
+      // Find reference stack position, add set location of current layer.
+      var pos = new THREE.Vector3(0, 0, 0);
+      setDepth(pos, stack, stackViewer);
+      layer.mesh.position.copy(pos);
+
+      // Also update tile textures, if enabled
+      if (layer.hasImages) {
+        // Create materials and textures
+        var tileSource = layer.tileSource;
+        var zoomLevel = layer.zoomLevel;
+        var layerStack = layer.stack;
+        var nCols = getNZoomedParts(layerStack.dimension.x, zoomLevel,
+            tileSource.tileWidth);
+        var materials = layer.materials;
+        for (var m=0; m<materials.length; ++m) {
+          var material = materials[m];
+          var texture = material.map;
+          var image;
+          if (texture) {
+            image = texture.image;
+            // Make sure texture and material are not marked for updated before
+            // images are loaded.
+            texture.needsUpdate = false;
+            material.needsUpdate = false;
+          } else {
+            image = new Image();
+            image.crossOrigin = true;
+            texture = new THREE.Texture(image);
+            image.onload = loadTile;
+            image.onerror = handleError;
+            material.map = texture;
           }
-        };
+          // Add some state information to image element to avoid creating a
+          // closure for a new function.
+          image.__material = material;
+          image.__notify = notify;
 
-        var zoomLevel = this.zplaneZoomLevel;
-        var nCols = getNZoomedParts(stack.dimension.x, zoomLevel, tileSource.tileWidth);
-        for (var i=0; i<this.zplaneMaterials.length; ++i) {
-          var material = this.zplaneMaterials[i];
-          var image = new Image();
-          image.crossOrigin = true;
-          var texture = new THREE.Texture(image);
-          image.onload = loadTile.bind(this, texture, material, notify);
+          // Layers further up, will replace pixels from layers further down,
+          // they are (currently) not combined.
+          material.blending = THREE.CustomBlending;
+          material.blendEquation = THREE.AddEquation;
+          material.blendSrc = THREE.SrcAlphaFactor;
+          material.blendDst = THREE.OneMinusSrcAlphaFactor;
+          material.depthTest = false;
 
           var slicePixelPosition = [stackViewer.z];
-          var col = i % nCols;
-          var row = (i - col) / nCols;
-          image.src = tileSource.getTileURL(project.id, stack,
+          var col = m % nCols;
+          var row = (m - col) / nCols;
+          image.src = tileSource.getTileURL(project.id, layerStack,
               slicePixelPosition, col, row, zoomLevel);
         }
+        layer.mesh.material.needsUpdate = true;
+      }
+    }
+  };
 
-        this.zplane.material.needsUpdate = true;
+  WebGLApplication.prototype.Space.prototype.StaticContent.prototype.beforeRender = function(scene, renderer, camera) {
+    // If z sections are displayed and show tile layer images, then the current
+    // view has to be rendered first and provided as a texture for the main
+    // scene z section.
+    if (this.zplane && this.zplaneLayerMeshes) {
+      // Make sure we have a render target
+      if (!this.zplaneRenderTarget) {
+        var size = renderer.getSize();
+        this.zplaneRenderTarget = new THREE.WebGLRenderTarget(size.width, size.height, {
+            minFilter: THREE.NearestFilter,
+            magFilter: THREE.NearestFilter
+        });
+        var material = new CATMAID.ShaderMeshBasicMaterial();
+        material.addUniforms({
+          displayScale: { value: renderer.getPixelRatio() },
+          zplane: { value: this.zplaneRenderTarget.texture },
+          width: { value: size.width },
+          height: { value: size.height }
+        });
+        material.insertSnippet('fragmentDeclarations', [
+          'uniform float displayScale;',
+          'uniform float width;',
+          'uniform float height;',
+          'uniform sampler2D zplane;',
+          ''
+        ].join('\n'));
+        material.insertSnippet('fragmentColor', [
+          'float texWidth = width * displayScale;',
+          'float texHeight = height * displayScale;',
+          'vec2 texCoord = vec2((gl_FragCoord.x - 0.5) / texWidth, (gl_FragCoord.y - 0.5) / texHeight);',
+          'vec4 diffuseColor = texture2D(zplane, texCoord);'
+        ].join('\n'));
+        material.side = THREE.DoubleSide;
+        material.transparent = true;
+        this.zplane.material = material;
+      }
+      // Render all zplane layers
+      renderer.render(this.zplaneScene, camera, this.zplaneRenderTarget, true);
+      renderer.setRenderTarget(null);
+
+      // If wanted, the z pane map can be exported
+      var saveZplaneImage = false;
+      if (saveZplaneImage) {
+        var img = CATMAID.tools.createImageFromGlContext(renderer.getContext(),
+            this.zplaneRenderTarget.width, this.zplaneRenderTarget.height);
+        var blob = CATMAID.tools.dataURItoBlob(img.src);
+        saveAs(blob, "catmaid-zplanemap.png");
+      }
+
+      // Wait for images with update
+      this.zplane.material.needsUpdate = false;
+    }
+  };
+
+  WebGLApplication.prototype.Space.prototype.StaticContent.prototype.setSize = function(width, height) {
+    if (this.zplaneRenderTarget) {
+      this.zplaneRenderTarget.setSize(width, height);
+      if (this.zplane) {
+        this.zplane.material.uniforms['width'].value = width;
+        this.zplane.material.uniforms['width'].needsUpdate = true;
+        this.zplane.material.uniforms['height'].value = height;
+        this.zplane.material.uniforms['height'].needsUpdate = true;
       }
     }
   };
@@ -2892,11 +3171,12 @@
     return controls;
   };
 
-  WebGLApplication.prototype.Space.prototype.View.prototype.render = function() {
+  WebGLApplication.prototype.Space.prototype.View.prototype.render = function(beforeRender) {
     if (this.controls) {
       this.controls.update();
     }
     if (this.renderer) {
+      CATMAID.tools.callIfFn(beforeRender, this.scene, this.renderer, this.camera);
       this.renderer.clear();
       this.renderer.render(this.space.scene, this.camera);
     }
@@ -3675,17 +3955,24 @@
         obj.alpha = 1.0;
       } else {
         originalMaterials.set(obj, obj.material);
-        obj.material = new THREE.MeshBasicMaterial({color: color});
+        obj.material = new THREE.MeshBasicMaterial({
+          color: color,
+          side: THREE.DoubleSide
+        });
       }
     });
 
-    // Prepare Z plane for picking, if visible
+    // Prepare first Z plane for picking (the z plane for the primary stack), if
+    // visible.
     var zplane = this.staticContent.zplane;
     if (o.show_zplane && zplane) {
       color++;
       idMap[color] = 'zplane';
       originalMaterials.set(zplane, zplane.material);
-      zplane.material = new THREE.MeshBasicMaterial({color: color});
+      zplane.material = new THREE.MeshBasicMaterial({
+        color: color,
+        side: THREE.DoubleSide
+      });
     }
 
     // Render scene to picking texture
@@ -3899,7 +4186,7 @@
       }
     });
 
-    // Reset Z plane material
+    // Reset Z plane material and visibility
     if (o.show_zplane && zplane) {
       zplane.material = originalMaterials.get(zplane);
     }
@@ -4545,6 +4832,18 @@
     return p;
   };
 
+  WebGLApplication.prototype.Space.prototype.Skeleton.prototype.getCenterOfMass = function() {
+    var nVertices = this.geometry['neurite'].vertices.length;
+    if (!nVertices) {
+      throw new CATMAID.ValueError("No vertices found for skeleton");
+    }
+    var weight = 1.0 / nVertices;
+    return this.geometry['neurite'].vertices.reduce(function(center, pos) {
+      center.addScaledVector(pos, weight);
+      return center;
+    }, new THREE.Vector3());
+  };
+
   WebGLApplication.prototype.Space.prototype.Skeleton.prototype.setSamplers = function(samplers) {
     this.samplers = samplers;
   };
@@ -4621,9 +4920,9 @@
         weight = undefined === weight? 1.0 : weight * 0.9 + 0.1;
 
         var baseColor = pickColor(vertex);
-        color = new THREE.Color().setRGB(baseColor.r * weight,
-                                             baseColor.g * weight,
-                                             baseColor.b * weight);
+        color = new THREE.Color(baseColor.r * weight,
+                                baseColor.g * weight,
+                                baseColor.b * weight);
 
         seen[node_id] = color;
 
@@ -4852,79 +5151,82 @@
   WebGLApplication.prototype.Space.prototype.updateConnectorColors = function(options, skeletons, callback) {
     // Make all
     var self = this;
-    var done = function() {
-      self.updateRestrictedConnectorColors(skeletons);
-      self.updateConnectorEdgeVisibility(options, skeletons);
-      if (CATMAID.tools.isFn(callback)) callback();
-    };
+    return new Promise(function(resolve, reject) {
+      var done = function() {
+        self.updateRestrictedConnectorColors(skeletons);
+        self.updateConnectorEdgeVisibility(options, skeletons);
+        resolve();
+        if (CATMAID.tools.isFn(callback)) callback();
+      };
 
-     if ('cyan-red' === options.connector_color ||
-        'cyan-red-dark' === options.connector_color) {
-      var pre = this.staticContent.synapticColors[0],
-          post = this.staticContent.synapticColors[1];
+      if ('cyan-red' === options.connector_color ||
+          'cyan-red-dark' === options.connector_color) {
+        var pre = self.staticContent.synapticColors[0],
+            post = self.staticContent.synapticColors[1];
 
-      pre.color.setRGB(1, 0, 0); // red
-      pre.vertexColors = THREE.NoColors;
-      pre.needsUpdate = true;
+        pre.color.setRGB(1, 0, 0); // red
+        pre.vertexColors = THREE.NoColors;
+        pre.needsUpdate = true;
 
-      if ('cyan-red' === options.connector_color) post.color.setRGB(0, 1, 1); // cyan
-      else post.color.setHex(0x00b7eb); // dark cyan
-      post.vertexColors = THREE.NoColors;
-      post.needsUpdate = true;
+        if ('cyan-red' === options.connector_color) post.color.setRGB(0, 1, 1); // cyan
+        else post.color.setHex(0x00b7eb); // dark cyan
+        post.vertexColors = THREE.NoColors;
+        post.needsUpdate = true;
 
-      skeletons.forEach(function(skeleton) {
-        skeleton.completeUpdateConnectorColor(options);
-      });
-
-      done();
-
-    } else if ('by-amount' === options.connector_color) {
-
-      var skids = skeletons.map(function(skeleton) { return skeleton.id; });
-
-      if (skids.length > 1) $.blockUI();
-
-      requestQueue.register(django_url + project.id + "/skeleton/connectors-by-partner",
-          "POST",
-          {skids: skids},
-          (function(status, text) {
-            try {
-              if (200 !== status) return;
-              var json = JSON.parse(text);
-              if (json.error) return alert(json.error);
-
-              skeletons.forEach(function(skeleton) {
-                skeleton.completeUpdateConnectorColor(options, json[skeleton.id]);
-              });
-
-              done();
-            } catch (e) {
-              console.log(e, e.stack);
-              alert(e);
-            }
-            $.unblockUI();
-          }).bind(this));
-    } else if ('axon-and-dendrite' === options.connector_color || 'synapse-clustering' === options.connector_color) {
-      fetchSkeletons(
-          skeletons.map(function(skeleton) { return skeleton.id; }),
-          function(skid) { return django_url + project.id + '/' + skid + '/0/1/0/compact-arbor'; },
-          function(skid) { return {}; },
-          (function(skid, json) { this.content.skeletons[skid].completeUpdateConnectorColor(options, json); }).bind(this),
-          function(skid) { CATMAID.msg("Error", "Failed to load synapses for: " + skid); },
-          (function() {
-            done();
-            this.render();
-          }).bind(this));
-    } else if ('skeleton' === options.connector_color) {
-      skeletons.forEach(function(skeleton) {
-        var fnConnectorValue = function() { return 0; },
-            fnMakeColor = function() { return skeleton.skeletonmodel.color.clone(); };
-        skeleton.synapticTypes.forEach(function(type) {
-          skeleton._colorConnectorsBy(type, fnConnectorValue, fnMakeColor);
+        skeletons.forEach(function(skeleton) {
+          skeleton.completeUpdateConnectorColor(options);
         });
-      });
-      done();
-    }
+
+        done();
+
+      } else if ('by-amount' === options.connector_color) {
+
+        var skids = skeletons.map(function(skeleton) { return skeleton.id; });
+
+        if (skids.length > 1) $.blockUI();
+
+        requestQueue.register(django_url + project.id + "/skeleton/connectors-by-partner",
+            "POST",
+            {skids: skids},
+            (function(status, text) {
+              try {
+                if (200 !== status) return;
+                var json = JSON.parse(text);
+                if (json.error) return alert(json.error);
+
+                skeletons.forEach(function(skeleton) {
+                  skeleton.completeUpdateConnectorColor(options, json[skeleton.id]);
+                });
+
+                done();
+              } catch (e) {
+                console.log(e, e.stack);
+                alert(e);
+              }
+              $.unblockUI();
+            }).bind(self));
+      } else if ('axon-and-dendrite' === options.connector_color || 'synapse-clustering' === options.connector_color) {
+        fetchSkeletons(
+            skeletons.map(function(skeleton) { return skeleton.id; }),
+            function(skid) { return django_url + project.id + '/' + skid + '/0/1/0/compact-arbor'; },
+            function(skid) { return {}; },
+            (function(skid, json) { self.content.skeletons[skid].completeUpdateConnectorColor(options, json); }).bind(self),
+            function(skid) { CATMAID.msg("Error", "Failed to load synapses for: " + skid); },
+            (function() {
+              done();
+              self.render();
+            }).bind(self));
+      } else if ('skeleton' === options.connector_color) {
+        skeletons.forEach(function(skeleton) {
+          var fnConnectorValue = function() { return 0; },
+              fnMakeColor = function() { return skeleton.skeletonmodel.color.clone(); };
+          skeleton.synapticTypes.forEach(function(type) {
+            skeleton._colorConnectorsBy(type, fnConnectorValue, fnMakeColor);
+          });
+        });
+        done();
+      }
+    });
   };
 
   /** Operates in conjunction with updateConnectorColors above. */
@@ -5030,13 +5332,13 @@
           fnConnectorValue;
 
       if (axon) {
-        var colors = [new THREE.Color().setRGB(0, 1, 0),  // axon: green
-                      new THREE.Color().setRGB(0, 0, 1)]; // dendrite: blue
+        var colors = [new THREE.Color(0, 1, 0),  // axon: green
+                      new THREE.Color(0, 0, 1)]; // dendrite: blue
         fnConnectorValue = function(node_id, connector_id) { return axon.contains(node_id) ? 0 : 1; };
         fnMakeColor = function(value) { return colors[value]; };
       } else {
         // Not computable
-        fnMakeColor = function() { return new THREE.Color().setRGB(0.4, 0.4, 0.4); };
+        fnMakeColor = function() { return new THREE.Color(0.4, 0.4, 0.4); };
         fnConnectorValue = function() { return 0; };
       }
 
@@ -5346,32 +5648,6 @@
     this.space.add(mesh);
   };
 
-  // Sort functions for sorting history data newest first. Since JavaScript
-  // Date objects only support Microsecond precision, we need to compare
-  // Postgres strings if two timestamps are equal up to the microsecond.
-  var compareTimestampEntry = function(timeIndexA, timeIndexB, a, b) {
-    // The time stamp is added as first element
-    var ta = a[0];
-    var tb = b[0];
-    if (ta > tb) {
-      return -1;
-    }
-    if (ta < tb) {
-      return 1;
-    }
-    if (ta.getTime() === tb.getTime()) {
-      // Compare microseconds in string representation, which is a hack,
-      // but works
-      var taS = a[2][timeIndexA];
-      var tbS = b[2][timeIndexB];
-      return -1 * CATMAID.tools.compareStrings(taS, tbS);
-    }
-  };
-  var sortElements = function(timeIndex, n) {
-    var elements = this[n];
-    elements.sort(compareTimestampEntry.bind(window, timeIndex, timeIndex));
-  };
-
   /**
    * Recreate the skeleton represention based on the passed in JSON data. If
    * historic data is part of this, the skeleton will contain multiple
@@ -5429,51 +5705,16 @@
     }
 
     if (withHistory) {
-      var makeHistoryAppender = function(timestampIndex) {
-       return function(o, n) {
-          var entries = o[n[0]];
-          if (!entries) {
-            entries = [];
-            o[n[0]] = entries;
-          }
-          var lowerBound = new Date(n[timestampIndex]);
-          var upperBound = new Date(n[timestampIndex + 1]);
-
-          // Make sure the entry which encodes the creation time (live entry),
-          // has its upper bound set to null (to represent infinity). All
-          // entries are sorted already, we therefore only need to check the
-          // first (youngest) entry.
-          if (upperBound <= lowerBound ||
-              upperBound.getTime() === lowerBound.getTime()) {
-            lowerBound = upperBound;
-            upperBound = null;
-            n[timestampIndex] = n[timestampIndex + 1];
-            n[timestampIndex + 1] = null;
-          }
-
-          entries.push([lowerBound, upperBound, n]);
-          return o;
-        };
-      };
-      // Create history data structure to make timestamp based look-up easier.
-      // Each data type has its own map of IDs to historic and present data,
-      // with each datum represented by an actual date, which in turn maps to
-      // element data.
-      this.history = {
-        nodes: !nodes ? {} : nodes.reduce(
-            makeHistoryAppender(8), {}),
-        connectors: !connectors ? {} : connectors.reduce(
-            makeHistoryAppender(6), {})//,
-      };
-
-      var nodeIds = Object.keys(this.history.nodes);
-      var connectorIds = Object.keys(this.history.connectors);
-
-      // Sort all history lists for each element
-      nodeIds.forEach(
-          sortElements.bind(this.history.nodes, 8));
-      connectorIds.forEach(
-          sortElements.bind(this.history.connectors, 6));
+      this.history = CATMAID.TimeSeries.makeHistoryIndex({
+        nodes: {
+          data: nodes,
+          timeIndex: 8
+        },
+        connectors: {
+          data: connectors,
+          timeIndex: 6
+        }
+      });
 
       // Update to most recent skeleton
       this.resetToPointInTime(skeletonModel, options, null, true);
@@ -5482,42 +5723,6 @@
           silent);
     }
   };
-
-  /**
-   * Get all nodes valid to a passed in time stamp (inclusive) as well as the
-   * next time stamp a change happens. Returned is a list of the following form:
-   * [nodes, nextChangeDate].
-   */
-  function getDataUntil(elements, timestamp) {
-    return Object.keys(elements).reduce(function(o, n) {
-      var versions = elements[n];
-      var match = null;
-      // Individual versions are sorted newest first
-      for (var i=0; i<versions.length; ++i) {
-        var validFrom = versions[i][0];
-        var validTo = versions[i][1];
-        if (validTo === null || validTo > timestamp) {
-          if (validFrom <= timestamp) {
-            match = i;
-            break;
-          } else {
-            // Record time of next version of this node, if larger than
-            // previous recording.
-            if (null === o[1]) {
-              o[1] = new Date(validFrom.getTime());
-            } else if (validFrom < o[1]) {
-              o[1].setTime(validFrom.getTime());
-            }
-          }
-        }
-      }
-      if (null !== match) {
-        var version = versions[match];
-        o[0].push(version[2]);
-      }
-      return o;
-    }, [[], null]);
-  }
 
   /**
    * Reset a skeleton to particular point in time. Expects skeleton history to
@@ -5553,8 +5758,8 @@
     // duplicate IDs and timestamps for each element. The first step is
     // therefore to find all nodes, connectors and tags that were valid at the
     // passed in timestamp.
-    var nodesInfo = getDataUntil(this.history.nodes, timestamp);
-    var connectorsInfo = getDataUntil(this.history.connectors, timestamp);
+    var nodesInfo = CATMAID.TimeSeries.getDataUntil(this.history.nodes, timestamp);
+    var connectorsInfo = CATMAID.TimeSeries.getDataUntil(this.history.connectors, timestamp);
     var nodes = nodesInfo[0];
     var connectors = connectorsInfo[0];
 
@@ -5999,7 +6204,8 @@
 
   WebGLApplication.prototype.setInterpolateVertexColors = function(enabled) {
     this.options.interpolate_vertex_colots = enabled;
-    this.updateSkeletonColors();
+    this.updateSkeletonColors()
+      .then(this.render.bind(this));
   };
 
   WebGLApplication.prototype.setFollowActive = function(value) {
@@ -6040,14 +6246,6 @@
     this.space.render();
   };
 
-  WebGLApplication.prototype._validate = function(number, error_msg, min) {
-    if (!number) return null;
-    var min = typeof(min) === "number" ? min : 1.0;
-    var value = +number; // cast
-    if (Number.isNaN(value) || value < min) return CATMAID.warn(error_msg);
-    return value;
-  };
-
   /**
    * Open a connector table with the connectors currently visisble in the 3D
    * viewer.
@@ -6068,7 +6266,7 @@
   };
 
   WebGLApplication.prototype.updateSynapseClusteringBandwidth = function(value) {
-    value = this._validate(value, "Invalid synapse clustering value");
+    value = CATMAID.tools.validateNumber(value, "Invalid synapse clustering value", 1);
     if (!value) return;
     this.options.synapse_clustering_bandwidth = value;
     if ('synapse-clustering' === this.options.connector_color) {
@@ -6079,7 +6277,7 @@
   };
 
   WebGLApplication.prototype.updateSkeletonLineWidth = function(value) {
-    value = this._validate(value, "Invalid skeleton line width value");
+    value = CATMAID.tools.validateNumber(value, "Invalid skeleton line width value", 1);
     if (!value) return;
     this.options.skeleton_line_width = value;
     var sks = this.space.content.skeletons;
@@ -6088,7 +6286,7 @@
   };
 
   WebGLApplication.prototype.updateSkeletonNodeHandleScaling = function(value) {
-    value = this._validate(value, "Invalid skeleton node scaling value", 0);
+    value = CATMAID.tools.validateNumber(value, "Invalid skeleton node scaling value", 0);
     if (!value) return;
     this.options.skeleton_node_scaling = value;
     var sks = this.space.content.skeletons;
@@ -6097,14 +6295,14 @@
   };
 
   WebGLApplication.prototype.updateSmoothSkeletonsSigma = function(value) {
-    value = this._validate(value, "Invalid sigma value");
+    value = CATMAID.tools.validateNumber(value, "Invalid sigma value", 1);
     if (!value) return;
     this.options.smooth_skeletons_sigma = value;
     if (this.options.smooth_skeletons) this.updateSkeletons();
   };
 
   WebGLApplication.prototype.updateResampleDelta = function(value) {
-    value = this._validate(value, "Invalid resample delta");
+    value = CATMAID.tools.validateNumber(value, "Invalid resample delta", 1);
     if (!value) return;
     this.options.resampling_delta = value;
     if (this.options.resample_skeletons) this.updateSkeletons();
@@ -6124,7 +6322,7 @@
 
     var onchange = (function(rgb, alpha, colorChanged, alphaChanged) {
       $('#' + labelId).text(alpha.toFixed(2));
-      var color = new THREE.Color().setRGB(rgb.r, rgb.g, rgb.b);
+      var color = new THREE.Color(rgb.r, rgb.g, rgb.b);
       this.options.meshes_color = '#' + color.getHexString();
       this.options.meshes_opacity = alpha;
     }).bind(this);
@@ -6150,7 +6348,7 @@
   };
 
   WebGLApplication.prototype.updateActiveNodeNeighborhoodRadius = function(value) {
-    value = this._validate(value, "Invalid value");
+    value = CATMAID.tools.validateNumber(value, "Invalid value", 1);
     if (!value) return;
     this.options.distance_to_active_node = value;
     if (this.options.shading_method.indexOf('near_active_node') !== -1) {
@@ -6166,21 +6364,32 @@
     }
   };
 
+  /** @param shading_method A string with the name of the shading method (e.g. "dendritic-backbone") or an array of such strings.
+   */
   WebGLApplication.prototype.updateShadingParameter = function(param, value, shading_method) {
     if (!this.options.hasOwnProperty(param)) {
       console.log("Invalid options parameter: ", param);
       return;
     }
+
+    if (shading_method.constructor === Array) {
+      for (var i=0; i<shading_method.length; ++i) {
+        this.updateShadingParameter(param, value, shading_method[i]);
+      }
+      return;
+    }
+
     if (shading_method === 'downstream-of-tag') {
       this.options[param] = value;
     } else {
       // Numerical only
-      value = this._validate(value, "Invalid value");
-      if (!value || value === this.options[param]) return;
+      value = CATMAID.tools.validateNumber(value, "Invalid value", 1);
+      if (!value) return;
       this.options[param] = value;
     }
     if (shading_method === this.options.shading_method) {
-      this.updateSkeletonColors();
+      this.updateSkeletonColors()
+        .then(this.render.bind(this));
     }
   };
 
@@ -6379,12 +6588,11 @@
           CATMAID.tools.callIfFn(params.notify, currentDate, startDate, endDate);
 
           // Color skeletons
+          var update = widget.updateSkeletonColors();
           if (widget.options.connector_filter) {
-            widget.updateSkeletonColors()
-              .then(widget.refreshRestrictedConnectors.bind(widget));
-          } else {
-            widget.updateSkeletonColors();
+            update = update.then(widget.refreshRestrictedConnectors.bind(widget));
           }
+          update.then(widget.render.bind(widget));
         };
         // Create a stop handler that resets visibility to the state we found before
         // the animation.

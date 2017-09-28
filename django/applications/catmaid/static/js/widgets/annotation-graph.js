@@ -21,7 +21,9 @@
     this.maxNodes = null;
 
     // Register a skeletonSource
-    this.skeletonSource = new CATMAID.BasicSkeletonSource(this.getName());
+    this.skeletonSource = new CATMAID.BasicSkeletonSource(this.getName(), {
+      owner: this
+    });
   };
 
   AnnotationGraph.prototype = Object.create(InstanceRegistry.prototype);
@@ -544,6 +546,8 @@
 
   // Register widget with CATMAID
   CATMAID.registerWidget({
+    name: 'Annotation Graph',
+    description: 'Show all annotations and their hierarchy',
     key: 'annotation-graph',
     creator: AnnotationGraph
   });

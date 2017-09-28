@@ -36,7 +36,11 @@
         388,
         388,
         1,
-        function( val ){ CATMAID.statusBar.replaceLast( "z: " + val ); return; } );
+        function( val ){ CATMAID.statusBar.replaceLast( "z: " + val ); return; },
+        undefined,
+        undefined,
+        undefined,
+        this.validateZ.bind(this));
 
     this.slider_s = new CATMAID.Slider(
         CATMAID.Slider.HORIZONTAL,
@@ -86,11 +90,13 @@
 
     this.updateControls = function()
     {
-      self.slider_s.setByValue( self.stackViewer.s, true );
-      self.slider_z.setByValue( self.stackViewer.z, true );
+      if (self.stackViewer) {
+        self.slider_s.setByValue( self.stackViewer.s, true );
+        self.slider_z.setByValue( self.stackViewer.z, true );
 
-      self.input_x.value = self.stackViewer.x;
-      self.input_y.value = self.stackViewer.y;
+        self.input_x.value = self.stackViewer.x;
+        self.input_y.value = self.stackViewer.y;
+      }
     };
 
     this.resize = function( width, height )
@@ -166,21 +172,29 @@
     var changeSliceDelayedAction = function()
     {
       window.clearTimeout( changeSliceDelayedTimer );
-      self.changeSlice( changeSliceDelayedParam.z );
+      self.changeSlice( changeSliceDelayedParam.z, changeSliceDelayedParam.step );
       changeSliceDelayedParam = null;
       return false;
     };
 
-    this.changeSliceDelayed = function( val )
+    this.changeSliceDelayed = function(val, step)
     {
       if ( changeSliceDelayedTimer ) window.clearTimeout( changeSliceDelayedTimer );
-      changeSliceDelayedParam = { z : val };
+      changeSliceDelayedParam = { z : val, step: step };
       changeSliceDelayedTimer = window.setTimeout( changeSliceDelayedAction, 50 );
     };
 
-    this.changeSlice = function( val )
+    this.changeSlice = function(val, step)
     {
-      self.stackViewer.moveToPixel( val, self.stackViewer.y, self.stackViewer.x, self.stackViewer.s );
+      try {
+        val = self.stackViewer.toValidZ(val, step < 0 ? -1 : 1);
+        self.stackViewer.moveToPixel( val, self.stackViewer.y, self.stackViewer.x, self.stackViewer.s );
+      } catch (error) {
+        // Due to the way, sliders area currently used, we have to reset the
+        // slider value.
+        self.slider_z.setByValue( self.stackViewer.z, true );
+        CATMAID.handleError(error);
+      }
     };
 
     var smoothChangeSlice = function (e, step) {
@@ -204,7 +218,7 @@
         }
         lastFrameTime = thisFrameTime;
 
-        var zOffset = self.stackViewer.primaryStack.validZDistanceByStep(self.slider_z.val, step);
+        var zOffset = self.stackViewer.validZDistanceByStep(self.slider_z.val, step);
         if (!zOffset) return;
         self.stackViewer.moveToPixel(
             self.slider_z.val + zOffset,
@@ -544,11 +558,12 @@
       {
         self.slider_z.getView().parentNode.style.display = "block";
       }
+      var validSections = self.stackViewer.getValidSections();
       self.slider_z.update(
         undefined,
         undefined,
-        { major: self.stackViewer.primaryStack.slices.filter(function(el,ind,arr) { return (ind % 10) === 0; }),
-          minor: self.stackViewer.primaryStack.slices },
+        { major: validSections.filter(function(e, i) { return i % 10 === 0; }),
+          minor: validSections },
         self.stackViewer.z,
         self.changeSliceDelayed );
 
@@ -632,6 +647,14 @@
       return result;
     };
   }
+
+  Navigator.prototype.validateZ = function(val) {
+    try {
+      return this.stackViewer.isValidZ(val);
+    } catch (error) {
+      return false;
+    }
+  };
 
   Navigator.Settings = new CATMAID.Settings(
       'navigator',

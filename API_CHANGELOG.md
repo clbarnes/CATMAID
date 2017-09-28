@@ -6,11 +6,71 @@ included in this changelog.
 
 ### Additions
 
+- `GET /{project_id}/samplers/domains/intervals/{interval_id}/details`:
+  Get detailed information about a particular interval.
+
+- `GET /{project_id}/neurons/`:
+  List all neurons in a project. Optionally, the parameters created_by,
+  reviewed_by, from, to and nodecount_gt can be provided.
+
+### Modifications
+
+- `POST /{project_id}/treenodes/{treenode_id}/info`:
+  This API endpoint is changed to only accept GET requests. Using POST will
+  raise an error.
+
+- `GET /{project_id}/stats/nodecount`:
+  The response format changed. Now a dictionary mapping user IDs to node counts
+  is returned.
+
+- `GET /{project_id}/stats/editor`:
+  The response format changed. Now a dictionary mapping user IDs to the number
+  of edited nodes is returned.
+
+- `GET /{project_id}/projects/export`:
+  Stacks include now also their translation and orientation relative to project
+  space.
+
+### Deprecations
+
+- `GET /{project_id}/annotationdiagram/nx_json`:
+  This API has a confusing name, because it uses 'annotation' differently than
+  others. There are different APIs available to get skeleton IDs and treenode
+  IDs.
+
+### Removals
+
+None.
+
+
+## 2017.07.28
+
+### Additions
+
 None.
 
 ### Modifications
 
-None.
+- `POST /{project_id}/skeletons/import`:
+  The new 'name' parameter can be used to set the name of a new neuron.
+
+- `POST /{project_id}/annotations/query-target`:
+  A boolean 'name_not' parameter is now accepted to get results not matching the
+  name passed in with the regular 'name' parameter. Also, an integer list
+  parameter named 'not_annotated_with' is now supported. Like the
+  'annotated_with' list, it contains annotation IDs. Results will not have the
+  annotations passed in with the `not_annotated_with` list.
+
+- `GET /{project_id}/skeletons/{skeleton_id}/compact-detail` and
+  `GET /{project_id}/skeletons/compact-detail`
+  Accepts two new parameters: with_reviews and with_annotations. To also return
+  a list of reviews and a list of linked skeleton IDs respectively for each
+  returned skeleton.
+
+- `POST /{project_id}/volumes/{volume_id}/`
+  Individual fields can now be updated selectively. Only fields that are passed
+  in as arguments will be updated. This allows for instance to only change the
+  name of a volume.
 
 ### Deprecations
 
