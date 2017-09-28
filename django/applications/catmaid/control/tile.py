@@ -8,7 +8,6 @@ import numpy as np
 import base64
 from django.conf import settings
 from django.http import HttpResponse, JsonResponse
-import psycopg2
 
 from catmaid.models import UserRole, TILE_SOURCE_TYPES
 from catmaid.control.common import ConfigurationError
@@ -96,28 +95,6 @@ def get_tile(request, project_id=None, stack_id=None):
     response['access-control-allow-origin'] = '*'
     pil_image.save(response, "PNG")
     return response
-
-
-@requires_user_role([UserRole.Browse])
-def get_skeleton_synapses(request, project_id=None):
-    raise NotImplementedError
-    # # todo: replace this with a database table
-    # basename = request.GET.get('basename', 'raw')
-    # skeleton_id = request.GET.get('skid')
-    #
-    # fpath = os.path.join( settings.HDF5_STORAGE_PATH, '{}_{}'.format( project_id, basename ) )
-    # if not os.path.exists(fpath):
-    #     return JsonResponse([])
-    #
-    # with h5py.File(fpath, 'r') as f:
-    #     hdfpath = 'synapse_info'
-    #     data = f[hdfpath]
-    #     headers = data.attrs['headers']
-    #     df = pd.DataFrame(np.array(data), columns=headers)
-    #
-    # relevant_rows = df[df['skeleton_id'] * df['overlaps_node_segment'] == int(skeleton_id)]
-    #
-    # return JsonResponse(relevant_rows.to_dict('records'), safe=False)
 
 
 @requires_user_role([UserRole.Annotate])
