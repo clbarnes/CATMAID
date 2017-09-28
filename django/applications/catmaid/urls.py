@@ -205,8 +205,6 @@ urlpatterns += [
     url(r'^(?P<project_id>\d+)/connectors/(?P<connector_id>\d+)/$',
         connector.connector_detail),
     url(r'^(?P<project_id>\d+)/connectors/types/$', connector.connector_types),
-    url(r'^(?P<project_id>\d+)/connectors/intersecting/$', connector.connectors_intersecting),
-    url(r'^(?P<project_id>\d+)/connectors/intersecting/many/$', connector.connectors_intersecting_many),
 ]
 
 # Neuron access

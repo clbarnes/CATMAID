@@ -12,7 +12,6 @@ from django.db import connection
 from django.db.models import Count
 from django.shortcuts import get_object_or_404
 from django.http import HttpResponse, JsonResponse, Http404
-import itertools
 
 from rest_framework.decorators import api_view
 
@@ -25,11 +24,8 @@ from catmaid.control.link import create_treenode_links
 from catmaid.control.common import cursor_fetch_dictionary, \
         get_relation_to_id_map, get_request_list
 
-from catmaid.control.node import Postgis3dNodeProvider
-
 # Python 2 and 3 compatible map iterator
 from six.moves import map
-from six import iteritems
 
 
 
@@ -790,55 +786,3 @@ def connector_detail(request, project_id, connector_id):
         'confidence': detail[4],
         'partners': [p for p in detail[5]]
     })
-
-
-def bbox_to_node_provider_params(bbox_dict, project_id, limit=50):
-    return {
-        'project_id': project_id,
-        'limit': limit,
-        'left': float(bbox_dict.get('xmin', 0)),
-        'top': float(bbox_dict.get('ymin', 0)),
-        'z1': float(bbox_dict.get('zmin', 0)),
-        'right': float(bbox_dict.get('xmax', 0)),
-        'bottom': float(bbox_dict.get('ymax', 0)),
-        'z2': float(bbox_dict.get('zmax', 0)),
-    }
-
-
-@api_view(['GET'])
-@requires_user_role([UserRole.Browse])
-def connectors_intersecting(request, project_id=None):
-    """
-    Get up to 50 connectors which are either in or have edges which intersect with the given bounding box.
-
-    Args:
-        request: Parameters should include bounding box of the form {xmin: number, xmax: number, ymin: ...}
-            Coordinates should be in project coordinates (i.e. taking into account resolution and offset)
-        project_id:
-
-    Returns:
-        Array of connector information arrays containing
-        [id, x, y, z, connector_confidence, edit_time, user_id, treenode_id, relation_id ...]
-    """
-    node_provider = Postgis3dNodeProvider()
-    cursor = connection.cursor()
-
-    params = bbox_to_node_provider_params(request.GET, project_id)
-    connectors = node_provider.get_connector_data(cursor, params, [])
-
-    return JsonResponse(connectors, safe=False)
-
-
-@api_view(['POST'])
-@requires_user_role([UserRole.Browse])
-def connectors_intersecting_many(request, project_id=None):
-    node_provider = Postgis3dNodeProvider()
-    node_provider.prepare_db_statements(connection)
-    cursor = connection.cursor()
-
-    output = dict()
-    for syn_id, bbox_str in iteritems(request.POST):
-        params = bbox_to_node_provider_params(json.loads(bbox_str), project_id)
-        output[syn_id] = node_provider.get_connector_data(cursor, params, [])
-
-    return JsonResponse(output)
