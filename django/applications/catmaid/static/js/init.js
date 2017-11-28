@@ -1432,7 +1432,8 @@ var project;
           !hideTileLayer,
           hideTileLayer ? 0 : 1,
           !useExistingViewer,
-          CATMAID.TileLayer.Settings.session.linear_interpolation,
+        // todo: replace with something which isn't a dirty hack
+          stack.title.includes('SYNAPSES') ? PIXI.SCALE_MODES.NEAREST : CATMAID.TileLayer.Settings.session.linear_interpolation,
           true);
 
       if (!useExistingViewer) {
