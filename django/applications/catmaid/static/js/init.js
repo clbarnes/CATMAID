@@ -1726,7 +1726,7 @@ var project;
    * @param  {StackViewer} stackViewer Viewer to which to add the stack.
    * @param  {number}      mirrorIndex Optional mirror index, defaults to
    *                                   the first available.
-   * @param  {Boolean} hide            The stack's layer will initially be
+   * @param  {Boolean} hide            The stack's tile layer will initially be
    *                                   hidden.
    * @return {Promise}                 A promise yielding the stack viewer
    *                                   containing the new stack.
@@ -1829,7 +1829,8 @@ var project;
           !hideStackLayer,
           hideStackLayer ? 0 : 1,
           !useExistingViewer,
-          CATMAID.StackLayer.INTERPOLATION_MODES.INHERIT,
+        // todo: replace with something which isn't a dirty hack
+          stack.title.includes('SYNAPSES') ? PIXI.SCALE_MODES.NEAREST : CATMAID.StackLayer.INTERPOLATION_MODES.INHERIT,
           true);
 
       if (!useExistingViewer) {
