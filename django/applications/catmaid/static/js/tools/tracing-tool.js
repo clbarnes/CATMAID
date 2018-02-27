@@ -1541,6 +1541,20 @@
       run: createNodeZMover(1)
     }));
 
+    this.addAction(new CATMAID.Action({
+      helpText: "Press the Next button in the Connector Peruser",
+      keyShortcuts: {'/': ['Alt + /']},
+      run: function(event) {
+        console.log('event intercepted');
+        const nextButtons = document.getElementsByClassName('connector-peruser-next');
+        if (nextButtons.length > 1) {
+          alert('More than one Connector Peruser Next button detected, aborting');
+        } else if (nextButtons.length === 1) {
+          nextButtons[0].click();
+        }
+      }
+    }));
+
     var keyToAction = CATMAID.getKeyToActionMap(actions);
 
     /**
