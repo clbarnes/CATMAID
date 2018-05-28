@@ -111,14 +111,14 @@ class LabelsApiTests(CatmaidApiTestCase):
         self.assertTrue('soma (2, max. 1)' in parsed_response['warning'])
 
 
-    def get_successful_stats_response(self):
+    def get_stats_data(self, params=None):
         self.fake_authentication()
         url = '/{}/labels/stats'.format(self.test_project_id)
-        response = self.client.get(url)
+        response = self.client.get(url, params)
 
         self.assertEqual(response.status_code, 200)
 
-        return response
+        return json.loads(response.content.decode("utf-8"))
 
 
     def assertListOfListsEqualContent(self, ref, test):
@@ -137,9 +137,9 @@ class LabelsApiTests(CatmaidApiTestCase):
             [351, u'TODO', 235, 261]
         ]
 
-        response = self.get_successful_stats_response()
+        data = self.get_stats_data()
 
-        self.assertListOfListsEqualContent(json.loads(response.content.decode('utf-8')), expected_response)
+        self.assertListOfListsEqualContent(data, expected_response)
 
 
     def test_stats_does_not_find_all_nodes_of_skeleton(self):
@@ -148,7 +148,74 @@ class LabelsApiTests(CatmaidApiTestCase):
         msg = "Returned label ID '{}' which is probably actually the ID of skeleton '{}', applied to all nodes in " \
               "that skeleton"
 
-        response = self.get_successful_stats_response()
+        data = self.get_stats_data()
 
-        for row in response:
+        for row in data:
             self.assertFalse(row[1] == 'skeleton {}'.format(row[0]) and row[2] == 1, msg=msg.format(row[0], row[1]))
+
+
+    def test_constraint_skid(self):
+        expected_response = [
+            [2342, u'uncertain end', 373, 403],
+            [351, u'TODO', 235, 261]
+        ]
+
+        data = self.get_stats_data({"skeleton_ids": [373, 235, 233]})
+
+        self.assertListOfListsEqualContent(data, expected_response)
+
+
+    def test_constraint_tnid(self):
+        expected_response = [
+            [2342, u'uncertain end', 373, 403],
+            [351, u'TODO', 1, 349],
+            [351, u'TODO', 235, 261]
+        ]
+
+        data = self.get_stats_data({"treenode_ids": [403, 7]})
+        self.assertListOfListsEqualContent(data, expected_response)
+
+
+    def test_constraint_label_id(self):
+        expected_response = [
+            [351, u'TODO', 1, 349],
+            [351, u'TODO', 235, 261]
+        ]
+
+        data = self.get_stats_data({"label_ids": [351]})
+        self.assertListOfListsEqualContent(data, expected_response)
+
+
+    def test_constraint_label_name(self):
+        expected_response = [
+            [2342, u'uncertain end', 373, 403],
+        ]
+
+        data = self.get_stats_data({"label_names": [u"uncertain end"]})
+        self.assertListOfListsEqualContent(data, expected_response)
+
+
+    def test_constraint_label_pattern(self):
+        expected_response = [
+            [2342, u'uncertain end', 373, 403],
+        ]
+
+        data = self.get_stats_data({"label_pattern": r"^un.ertain\s*\w+"})
+        self.assertListOfListsEqualContent(data, expected_response)
+
+
+    def test_constraint_label_pattern_neg_ci(self):
+        expected_response = [
+            [351, u'TODO', 1, 349],
+            [351, u'TODO', 235, 261]
+        ]
+
+        data = self.get_stats_data({"label_pattern": r"^un.ERTAIN\s*\w+"})
+        self.assertListOfListsEqualContent(data, expected_response)
+
+
+    def test_constraint_intersection(self):
+        expected_response = []
+
+        data = self.get_stats_data({"skeleton_ids": [235], "label_names": [u"uncertain_end"]})
+        self.assertListOfListsEqualContent(data, expected_response)

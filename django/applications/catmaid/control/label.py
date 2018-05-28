@@ -16,7 +16,7 @@ from catmaid.models import Project, Class, ClassInstance, Relation, Connector, \
         ChangeRequest
 from catmaid.control.authentication import (requires_user_role, can_edit_or_fail,
         PermissionError)
-from catmaid.control.common import get_request_bool
+from catmaid.control.common import get_request_bool, get_request_list
 from catmaid.fields import Double3D
 
 
@@ -87,13 +87,42 @@ def labels_all(request, project_id=None):
 @api_view(['GET'])
 @requires_user_role(UserRole.Browse)
 def get_label_stats(request, project_id=None):
-    """Get usage statistics of node labels.
+    """Get usage of node labels/tags.
+
+    Within each constraint type, the union of all parameters is considered,
+    but the across classes of constraint, the intersection is used,
+    i.e. skeleton_ids=[1, 2], label_names=["mitos"]
+    will get all labels associated
+    with (skeleton 1 AND called "mitos"),
+    OR with (skeleton 2 AND called "mitos").
 
     ---
     parameters:
     - name: project_id
-      description: Project from which to get label stats
+      description: Project from which to get label usage
       required: true
+    - name: skeleton_ids
+      description: Skeletons to check for label usage
+      required: false
+    - name: treenode_ids
+      description: Treenodes to check for label usage
+      required: false
+    - name: label_ids
+      description: Label IDs to check for usage
+      required: false
+    - name: label_names
+      description: Label names to check for usage
+      required: false
+    - name: label_pattern
+      description: POSIX regex to match label names to and check their usage
+      required: false
+    - name: pattern_ci
+      description: Whether to treat label_pattern as case-insensitive (encoded as "true"/"false")
+      required: false
+    - name: pattern_negate
+      description: Whether to negate label_pattern, searching for all labels which do not match it
+       (encoded as "true"/"false")
+      required: false
     type:
     - type: array
       items:
@@ -104,19 +133,56 @@ def get_label_stats(request, project_id=None):
       description: Labels used in this project
       required: true
     """
+    skeleton_ids = get_request_list(request.GET, "skeleton_ids", [], int)
+    treenode_ids = get_request_list(request.GET, "treenode_ids", [], int)
+    label_ids = get_request_list(request.GET, "label_ids", [], int)
+    label_names = get_request_list(request.GET, "label_names", [])
+    label_pattern = request.GET.get("label_pattern")
+
     labeled_as_relation = Relation.objects.get(project=project_id, relation_name='labeled_as')
 
     cursor = connection.cursor()
-    cursor.execute("""
+
+    components = ["""
         SELECT ci.id, ci.name, t.skeleton_id, t.id
           FROM class_instance ci
           JOIN treenode_class_instance tci
             ON tci.class_instance_id = ci.id
           JOIN treenode t
             ON tci.treenode_id = t.id
-          WHERE ci.project_id = %s
-            AND tci.relation_id = %s;
-    """, [project_id, labeled_as_relation.id])
+          WHERE ci.project_id = %(pid)s
+            AND tci.relation_id = %(rid)s
+    """]
+
+    query_args = {"pid": project_id, "rid": labeled_as_relation.id}
+
+    if skeleton_ids:
+        components.append("t.skeleton_id IN %(skids)s")
+        query_args["skids"] = skeleton_ids
+
+    if treenode_ids:
+        components.append("t.id IN %(tnids)s")
+        query_args["tnids"] = treenode_ids
+
+    if label_ids:
+        components.append("ci.id IN %(lids)s")
+        query_args["lids"] = label_ids
+
+    if label_names:
+        components.append("ci.name IN %(lnames)s")
+        query_args["lnames"] = label_names
+
+    if label_pattern:
+        pattern_ci = get_request_bool("pattern_ci", False)
+        pattern_negate = get_request_bool("pattern_negate", False)
+        op = '{}~{}'.format(
+            '!' if pattern_negate else '',
+            '*' if pattern_ci else ''
+        )
+        components.append("ci.name {} %(lre)s".format(op))
+        query_args["lre"] = label_pattern
+
+    cursor.execute(" AND ".join(components) + ';', query_args)
 
     return JsonResponse(cursor.fetchall(), safe=False)
 
