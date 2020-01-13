@@ -4,11 +4,11 @@ imagemagick
 gcc
 gfortran
 git
-python3.6-dev
+python3.7-dev
 postgresql-common
 libpq-dev
 libgraphicsmagick++1-dev
-graphicsmagick graphicsmagick-imagemagick-compat
+graphicsmagick-imagemagick-compat
 graphicsmagick-libmagick-dev-compat
 graphicsmagick
 libhdf5-serial-dev
