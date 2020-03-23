@@ -17,10 +17,14 @@ Vagrant.configure("2") do |config|
   
   config.vm.hostname = "catmaid-vm"
   config.vm.define "catmaid-vm"
-
-  config.vm.network "forwarded_port", guest: 8888, host: 8888, host_ip: "127.0.0.1"
-  config.vm.network "forwarded_port", guest: 5432, host: 5555, host_ip: "127.0.0.1"
   config.vm.network "private_network", type: "dhcp"
+  
+  # django dev server
+  config.vm.network "forwarded_port", guest: 8888, host: 8888, host_ip: "127.0.0.1"
+  # docs server
+  config.vm.network "forwarded_port", guest: 8889, host: 8889, host_ip: "127.0.0.1"
+  # postgres
+  config.vm.network "forwarded_port", guest: 5432, host: 5555, host_ip: "127.0.0.1"
 
   config.vm.provision :shell, path: "scripts/vagrant/root.sh"
   config.vm.provision :shell, privileged: false, path: "scripts/vagrant/user.sh"

@@ -48,10 +48,19 @@ widgetdoc:
 	`rm -f -r source/_static/widgets`
 	`cp -r ../django/applications/catmaid/static/html/doc/widgets source/_static/widgets`
 
-html:
+html: clean-html
 	$(SPHINXBUILD) -b html $(ALLSPHINXOPTS) $(BUILDDIR)/html
 	@echo
 	@echo "Build finished. The HTML pages are in $(BUILDDIR)/html."
+
+clean-html:
+	rm -rf $(BUILDDIR)/html/*
+
+watch-html: html
+	watchmedo shell-command -R -D -p '*.rst' -c '$(MAKE) html' .
+
+serve-html: html
+	python -m http.server 8889 --directory $(BUILDDIR)/html
 
 dirhtml:
 	$(SPHINXBUILD) -b dirhtml $(ALLSPHINXOPTS) $(BUILDDIR)/dirhtml

@@ -5,3 +5,6 @@ Markdown==2.6.9
 Pygments==2.2.0
 Sphinx==2.4.2
 sphinxcontrib-images==0.9.1
+argh==0.26.2
+watchdog==0.10.2
+
